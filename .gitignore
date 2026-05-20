@@ -1,18 +1,44 @@
-# Secrets — never commit
+# ── Secrets — NEVER commit ───────────────────────────────────────
 .env
+*.env
+.env.local
+.env.production
 
-# Database files — stored on disk via bind mount, never commit
+# ── Database data — bind mount on disk, never commit ─────────────
 data/
 
-# Python cache
+# ── Python ───────────────────────────────────────────────────────
 dataseeder/__pycache__/
 dataseeder/*.pyc
+dataseeder/*.pyo
 dataseeder/.venv/
+dataseeder/venv/
+dataseeder/*.xlsx
 
-# Frontend build artifacts
-frontend/node_modules/
-frontend/dist/
-
-# Backend build artifacts
+# ── .NET backend ─────────────────────────────────────────────────
 backend/bin/
 backend/obj/
+backend/*.user
+backend/.vs/
+
+# ── React frontend ───────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ── Docker ───────────────────────────────────────────────────────
+# Do NOT ignore docker-compose.yml — it is part of the project
+# Only ignore local override files
+docker-compose.override.yml
+docker-compose.local.yml
+
+# ── OS files ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE files ────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
