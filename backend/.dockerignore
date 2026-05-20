@@ -1,0 +1,7 @@
+# Build output — not needed in Docker context
+bin/
+obj/
+
+# Git files
+.git
+.gitignore

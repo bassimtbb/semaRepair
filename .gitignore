@@ -1,0 +1,18 @@
+# Secrets — never commit
+.env
+
+# Database files — stored on disk via bind mount, never commit
+data/
+
+# Python cache
+dataseeder/__pycache__/
+dataseeder/*.pyc
+dataseeder/.venv/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+
+# Backend build artifacts
+backend/bin/
+backend/obj/
