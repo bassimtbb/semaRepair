@@ -11,9 +11,10 @@ interface Props {
   onSelectCar: (car: CarOption) => void
   onSelectDtcCar: (car: DtcCarOption, dtcCode: string) => void
   onSymptomCarSelect: (car: CarOption) => void
+  onDtcVehicleNotFound: (dtcCode: string) => void
 }
 
-export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomCarSelect }: Props) {
+export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomCarSelect, onDtcVehicleNotFound }: Props) {
   const isUser = message.role === 'user'
   const p = message.parsed
 
@@ -40,8 +41,8 @@ export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomC
     <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
       <div style={{ maxWidth: '85%', minWidth: 60 }}>
 
-        {/* Typing dots — only while streaming and buffer still empty */}
-        {message.isStreaming && !message.rawContent && (
+        {/* Typing dots — while streaming and no parsed result yet */}
+        {message.isStreaming && !p && (
           <div style={{
             background: '#ffffff',
             border: '1px solid #e2e8f0',
@@ -71,10 +72,20 @@ export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomC
 
             {/* Identification: car option cards */}
             {p.phase === 'identification' && !p.confirmed && p.carMatches && p.carMatches.length > 0 && (
-              <div style={{ marginTop: p.message ? 12 : 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {p.carMatches.map((car, i) => (
-                  <CarOptionCard key={car.idMacchina ?? i} car={car} index={i} onSelect={onSelectCar} />
-                ))}
+              <div style={{ marginTop: p.message ? 12 : 0 }}>
+                <div style={{
+                  fontSize: 12,
+                  color: '#64748b',
+                  marginBottom: 6,
+                  fontStyle: 'italic',
+                }}>
+                  👆 Clicca sul tuo veicolo per confermarlo
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {p.carMatches.map((car, i) => (
+                    <CarOptionCard key={car.idMacchina ?? i} car={car} index={i} onSelect={onSelectCar} />
+                  ))}
+                </div>
               </div>
             )}
 
@@ -90,6 +101,22 @@ export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomC
                     onSelect={onSelectDtcCar}
                   />
                 ))}
+                <button
+                  onClick={() => onDtcVehicleNotFound(p.dtcCode!)}
+                  style={{
+                    background: 'transparent',
+                    border: '1px dashed #cbd5e1',
+                    borderRadius: 8,
+                    padding: '8px 14px',
+                    color: '#64748b',
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    marginTop: 4,
+                  }}
+                >
+                  Il mio veicolo non è in questa lista →
+                </button>
               </div>
             )}
 
@@ -115,6 +142,14 @@ export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomC
             {/* Symptom car selection */}
             {p.phase === 'symptom_cars' && p.documents && p.documents.length > 0 && (
               <div style={{ marginTop: p.message ? 12 : 0 }}>
+                <div style={{
+                  fontSize: 12,
+                  color: '#64748b',
+                  marginBottom: 6,
+                  fontStyle: 'italic',
+                }}>
+                  👆 Clicca sul tuo veicolo per vedere la procedura di riparazione
+                </div>
                 {p.documents.map(doc => (
                   <SymptomCarCard
                     key={doc.siglaDocumento}
@@ -158,18 +193,16 @@ export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomC
           </div>
         )}
 
-        {/* Streaming: raw accumulating buffer */}
-        {!p && message.rawContent && (
+        {/* Fallback: only shown after streaming ends if parsing failed AND content is not JSON */}
+        {!p && !message.isStreaming && message.rawContent && !message.rawContent.trimStart().startsWith('{') && (
           <div style={{
             background: '#ffffff',
             border: '1px solid #e2e8f0',
             borderRadius: '18px 18px 18px 4px',
             padding: '12px 14px',
-            color: '#94a3b8',
-            fontSize: 13,
-            fontFamily: 'monospace',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
+            color: '#1e293b',
+            fontSize: 14,
+            lineHeight: 1.6,
           }}>
             {message.rawContent}
           </div>

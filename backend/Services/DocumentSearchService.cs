@@ -89,28 +89,24 @@ public sealed class DocumentSearchService : IDocumentSearchService
                 rd.Cars.Any(c => c.CodiceMotoreMacchina == codiceMotore));
         }
 
-        // Fetch 5 from DB to have candidates; cap at 3 in memory to avoid
-        // showing low-relevance documents when only 1-2 are truly similar.
         var documents = await query
             .OrderBy(rd => rd.Embedding!.CosineDistance(queryVector))
-            .Take(5)
+            .Take(topK)
             .Include(rd => rd.Cars)
             .ToListAsync(ct);
 
         _logger.LogDebug(
             "Semantic search returned {Count} documents.", documents.Count);
 
-        var relevant = documents.Take(3).ToList();
-
-        if (relevant.Count == 0)
+        if (documents.Count == 0)
         {
             _logger.LogInformation(
                 "Semantic search returned 0 results for engine={Engine}. Falling back to keyword search.",
                 codiceMotore);
-            return await SearchByKeywordAsync(symptom, codiceMotore, ct);
+            return await SearchByKeywordAsync(symptom, codiceMotore, topK, ct);
         }
 
-        return relevant.Select(ToResult).ToList();
+        return documents.Select(ToResult).ToList();
     }
 
     /// <inheritdoc/>
@@ -139,7 +135,7 @@ public sealed class DocumentSearchService : IDocumentSearchService
             _logger.LogInformation(
                 "Symptom-only semantic search returned 0 results. " +
                 "Falling back to keyword search.");
-            return await SearchByKeywordAsync(symptom, null, ct);
+            return await SearchByKeywordAsync(symptom, null, topK, ct);
         }
 
         _logger.LogDebug(
@@ -156,6 +152,7 @@ public sealed class DocumentSearchService : IDocumentSearchService
     private async Task<IReadOnlyList<RepairDocumentResult>> SearchByKeywordAsync(
         string query,
         string? codiceMotore = null,
+        int topK = 3,
         CancellationToken ct = default)
     {
         // Keep words that are 3+ chars and contain no tsquery operator characters
@@ -181,7 +178,7 @@ public sealed class DocumentSearchService : IDocumentSearchService
             .Where(rd => rd.SearchVector!.Matches(
                 EF.Functions.ToTsQuery("simple", tsQueryString)))
             .Include(rd => rd.Cars)
-            .Take(5)
+            .Take(topK)
             .ToListAsync(ct);
 
         _logger.LogInformation(

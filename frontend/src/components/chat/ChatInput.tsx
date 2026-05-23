@@ -1,4 +1,4 @@
-import { useState, useRef, type KeyboardEvent } from 'react'
+import { useState, useRef, useEffect, type KeyboardEvent } from 'react'
 import { Mic, MicOff, Loader } from 'lucide-react'
 import { useAudioRecorder } from '../../hooks/useAudioRecorder'
 
@@ -14,6 +14,21 @@ export function ChatInput({ onSend, disabled }: Props) {
   const recorder = useAudioRecorder((transcript) => {
     setText(prev => prev.trim() ? prev.trim() + ' ' + transcript : transcript)
   })
+
+  // Auto-grow: runs whenever text changes (typed or set programmatically by voice)
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const maxHeight = 200
+    if (el.scrollHeight > maxHeight) {
+      el.style.height = `${maxHeight}px`
+      el.style.overflowY = 'auto'
+    } else {
+      el.style.height = `${el.scrollHeight}px`
+      el.style.overflowY = 'hidden'
+    }
+  }, [text])
 
   const handleSend = () => {
     const trimmed = text.trim()
@@ -59,6 +74,8 @@ export function ChatInput({ onSend, disabled }: Props) {
       <style>{`
         @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
         @keyframes spin  { from { transform:rotate(0deg) } to { transform:rotate(360deg) } }
+        textarea::-webkit-scrollbar { width: 4px; }
+        textarea::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
       `}</style>
 
       {recorder.error && (
@@ -86,16 +103,17 @@ export function ChatInput({ onSend, disabled }: Props) {
           rows={1}
           style={{
             flex: 1,
+            minWidth: 0,
             background: 'transparent',
             border: 'none',
             outline: 'none',
             color: '#1e293b',
             fontSize: 14,
-            resize: 'none',
-            lineHeight: 1.5,
-            maxHeight: 120,
-            overflowY: 'auto',
             fontFamily: 'inherit',
+            lineHeight: 1.5,
+            resize: 'none',
+            overflowY: 'hidden',
+            display: 'block',
           }}
         />
 
@@ -112,6 +130,7 @@ export function ChatInput({ onSend, disabled }: Props) {
             padding: 4,
             display: 'flex',
             alignItems: 'center',
+            flexShrink: 0,
             transition: 'all 0.2s',
             animation: recorder.isRecording ? 'pulse 1s infinite' : 'none',
           }}
@@ -137,6 +156,7 @@ export function ChatInput({ onSend, disabled }: Props) {
             color: '#fff',
             fontSize: 16,
             lineHeight: 1,
+            flexShrink: 0,
             transition: 'background 0.15s',
           }}
         >

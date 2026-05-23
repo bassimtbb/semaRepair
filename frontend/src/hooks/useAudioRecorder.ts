@@ -105,7 +105,14 @@ export function useAudioRecorder(
           const data = await response.json()
 
           if (data.transcript) {
-            onTranscript(data.transcript)
+            // Detect garbage transcription (repeated chars like "lllll")
+            const hasRepeatedChars = /(.)\1{10,}/.test(data.transcript)
+            if (hasRepeatedChars || data.transcript.trim().length === 0) {
+              setError('Trascrizione non riuscita. Riprova parlando chiaramente.')
+              return
+            }
+            const cleanTranscript = data.transcript.trim().slice(0, 300)
+            onTranscript(cleanTranscript)
           } else {
             setError('Nessun testo rilevato. Riprova.')
           }

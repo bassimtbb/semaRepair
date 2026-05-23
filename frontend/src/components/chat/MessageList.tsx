@@ -8,9 +8,10 @@ interface Props {
   onSelectCar: (car: CarOption) => void
   onSelectDtcCar: (car: DtcCarOption, dtcCode: string) => void
   onSymptomCarSelect: (car: CarOption) => void
+  onDtcVehicleNotFound: (dtcCode: string) => void
 }
 
-export function MessageList({ messages, onSelectCar, onSelectDtcCar, onSymptomCarSelect }: Props) {
+export function MessageList({ messages, onSelectCar, onSelectDtcCar, onSymptomCarSelect, onDtcVehicleNotFound }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -49,6 +50,7 @@ export function MessageList({ messages, onSelectCar, onSelectDtcCar, onSymptomCa
           onSelectCar={onSelectCar}
           onSelectDtcCar={onSelectDtcCar}
           onSymptomCarSelect={onSymptomCarSelect}
+          onDtcVehicleNotFound={onDtcVehicleNotFound}
         />
       ))}
       <div ref={bottomRef} />

@@ -1,14 +1,19 @@
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using Pgvector.EntityFrameworkCore;
 using Scalar.AspNetCore;
 using SemaRepair.Api.Data;
-using SemaRepair.Api.Dtos;
-using SemaRepair.Api.Prompts;
 using SemaRepair.Api.Services;
 using SemaRepair.Api.Services.Interfaces;
 using SemaRepair.Api.Startup;
-using SemaRepair.Api.Utils;
+
+// Prevent unhandled background exceptions from killing the process.
+// ASP.NET Core recovers per-request, but AppDomain crashes are fatal.
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    var ex = e.ExceptionObject as Exception;
+    Console.Error.WriteLine($"[FATAL] Unhandled exception: {ex?.Message}");
+    Console.Error.WriteLine(ex?.StackTrace);
+};
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -42,25 +47,28 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddHttpClient();
 
 // Named HttpClient for GeminiEmbeddingService.
-// Using AddHttpClient<T> creates a typed client with proper lifecycle management.
 builder.Services.AddHttpClient<IEmbeddingService, GeminiEmbeddingService>();
 
-// Named HttpClient for GeminiChatService
+// Named HttpClient for GeminiChatService (still used by TranscriptionController).
 builder.Services.AddHttpClient<IChatService, GeminiChatService>();
 
 // ── Startup background service ────────────────────────────────────────────────
 // Runs once on startup to generate any missing embeddings.
-// Idempotent — skips tables that already have all embeddings.
 builder.Services.AddHostedService<EmbeddingStartupService>();
 
 // ── Search services ───────────────────────────────────────────────────────────
-// Scoped — new instance per HTTP request, shares the DbContext lifetime.
 builder.Services.AddScoped<ICarSearchService, CarSearchService>();
 builder.Services.AddScoped<IDocumentSearchService, DocumentSearchService>();
 
+// ── Repair orchestration ──────────────────────────────────────────────────────
+// RepairPlugin executes tool calls against the database and search services.
+builder.Services.AddScoped<RepairPlugin>();
+
+// RepairOrchestrator coordinates Gemini function calling.
+// AddHttpClient<T> handles both DI registration and typed HttpClient injection.
+builder.Services.AddHttpClient<RepairOrchestrator>();
+
 // ── CORS ──────────────────────────────────────────────────────────────────────
-// Allow the React frontend to call the API from the browser.
-// In production this should be restricted to the actual domain.
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>

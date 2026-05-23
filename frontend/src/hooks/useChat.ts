@@ -64,8 +64,12 @@ export function useChat() {
    * 2. Adds empty streaming assistant placeholder
    * 3. Reads SSE stream and accumulates chunks
    * 4. On stream end: parses JSON and handles phase transitions
+   *
+   * overrideCar: pass the just-confirmed car directly to avoid ref timing
+   * races caused by line `confirmedCarRef.current = confirmedCar` running
+   * on re-renders before the state update is committed.
    */
-  const sendMessage = useCallback(async (text: string) => {
+  const sendMessage = useCallback(async (text: string, overrideCar?: ConfirmedCar) => {
     if (isProcessingRef.current || !text.trim()) return
     isProcessingRef.current = true
 
@@ -105,10 +109,13 @@ export function useChat() {
     let buffer = ''
 
     try {
+      // Use the explicitly passed car first; fall back to ref for normal sends.
+      const carToUse = overrideCar ?? confirmedCarRef.current
+
       const reader = await streamChat({
         message: text,
         history: buildHistory(),
-        car: confirmedCarRef.current,
+        car: carToUse,
       })
 
       const decoder = new TextDecoder()
@@ -164,10 +171,10 @@ export function useChat() {
         const savedCode = detectedCodeRef.current
         const originalQuery = originalQueryRef.current
         if (savedCode) {
-          setTimeout(() => { sendMessage(savedCode) }, 100)
+          setTimeout(() => { sendMessage(savedCode, car) }, 100)
           detectedCodeRef.current = null
         } else if (originalQuery && originalQuery !== text) {
-          setTimeout(() => { sendMessage(originalQuery) }, 100)
+          setTimeout(() => { sendMessage(originalQuery, car) }, 100)
         }
       }
 
@@ -184,7 +191,7 @@ export function useChat() {
 
         const originalQuery = originalQueryRef.current
         if (originalQuery) {
-          setTimeout(() => { sendMessage(originalQuery) }, 100)
+          setTimeout(() => { sendMessage(originalQuery, car) }, 100)
         }
       }
 
@@ -212,6 +219,7 @@ export function useChat() {
    * Called when the mechanic clicks a car from symptom search results.
    * Sets the confirmed car and immediately re-sends the original symptom
    * so the repair documents are shown for that specific car.
+   * Passes the confirmed car directly to sendMessage to avoid ref timing races.
    */
   const selectSymptomCar = useCallback((car: CarOption) => {
     const confirmed: ConfirmedCar = {
@@ -231,7 +239,8 @@ export function useChat() {
 
     const originalQuery = originalQueryRef.current
     if (originalQuery) {
-      setTimeout(() => sendMessage(originalQuery), 100)
+      // Pass confirmed directly — do not rely on ref being read after re-render
+      setTimeout(() => sendMessage(originalQuery, confirmed), 50)
     }
   }, [sendMessage])
 
@@ -245,7 +254,7 @@ export function useChat() {
 
   /**
    * Called when the mechanic selects a car from DTC search results.
-   * Sets the confirmed car immediately so the next request uses it.
+   * Passes the confirmed car directly to avoid ref timing races.
    */
   const selectDtcCar = useCallback((car: DtcCarOption, dtcCode: string) => {
     const confirmed: ConfirmedCar = {
@@ -264,8 +273,18 @@ export function useChat() {
     confirmedCarRef.current = confirmed
     sendMessage(
       `Seleziono ${car.marca} ${car.modello} ${car.motorizzazione} ` +
-      `per il codice ${dtcCode}`
+      `per il codice ${dtcCode}`,
+      confirmed
     )
+  }, [sendMessage])
+
+  /**
+   * Called when the mechanic clicks "Il mio veicolo non è in questa lista"
+   * under a DTC car selection. Sends a pre-formatted message so Gemini has
+   * the explicit DTC code in context and returns an ask_car response.
+   */
+  const dtcVehicleNotFound = useCallback((dtcCode: string) => {
+    sendMessage(`Il mio veicolo non è nella lista per il codice ${dtcCode}`)
   }, [sendMessage])
 
   /** Resets the entire conversation. */
@@ -278,5 +297,5 @@ export function useChat() {
     isProcessingRef.current = false
   }, [])
 
-  return { messages, confirmedCar, isStreaming, sendMessage, selectCar, selectDtcCar, selectSymptomCar, resetCar }
+  return { messages, confirmedCar, isStreaming, sendMessage, selectCar, selectDtcCar, selectSymptomCar, resetCar, dtcVehicleNotFound }
 }

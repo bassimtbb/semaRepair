@@ -95,7 +95,7 @@ export function RepairCaseCard({ repairCase: rc }: Props) {
           fontSize: 15,
           lineHeight: 1.4,
         }}>
-          {rc.titolo}
+          {rc.titolo?.split('|')[0].trim()}
         </span>
         <button
           onClick={() => window.print()}
@@ -142,7 +142,7 @@ export function RepairCaseCard({ repairCase: rc }: Props) {
           <ul style={UL_STYLE}>
             <li style={LI_STYLE}><strong>Impianto:</strong> {rc.impianto}</li>
             <li style={LI_STYLE}><strong>Dispositivo:</strong> {rc.dispositivo}</li>
-            <li style={LI_STYLE}><strong>Anomalia:</strong> {rc.titolo}</li>
+            <li style={LI_STYLE}><strong>Anomalia:</strong> {rc.titolo?.split('|')[0].trim()}</li>
             <li style={LI_STYLE}>
               <strong>Errori rilevati dall'autodiagnosi:</strong>{' '}
               <DtcInline codes={rc.dtc} />

@@ -115,25 +115,75 @@ public static class DocumentExtractor
     /// <summary>
     /// Extracts all structured fields from a repair document.
     /// Returns a PreExtractedCase with exact text from the source.
+    ///
+    /// When identificazione is NULL (some documents lack it), falls back to
+    /// parole_chiave to derive Impianto and Dispositivo from keywords.
     /// </summary>
     public static PreExtractedCase Extract(RepairDocumentResult doc)
     {
-        var id = doc.Identificazione ?? string.Empty;
-        var proc = doc.Procedura ?? string.Empty;
+        var id       = doc.Identificazione ?? string.Empty;
+        var proc     = doc.Procedura       ?? string.Empty;
         var combined = id + " " + proc;
+
+        var impianto    = ExtractField(id, "Impianto");
+        var dispositivo = ExtractField(id, "Dispositivo");
+        var causa       = ExtractField(id, "Causa");
+
+        // When identificazione is empty, derive Impianto and Dispositivo from
+        // the pipe-separated parole_chiave, e.g. "INIEZIONE | DIESEL | EGR | P2279 |"
+        if (string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(doc.ParoleChiave))
+        {
+            var (kwImpianto, kwDispositivo) = ExtractFromKeywords(doc.ParoleChiave);
+            impianto    ??= kwImpianto;
+            dispositivo ??= kwDispositivo;
+        }
 
         return new PreExtractedCase(
             SiglaDocumento:     doc.SiglaDocumento,
             TitoloDocumento:    doc.TitoloDocumento,
             GradoAttendibilita: doc.GradoAttendibilita,
-            Impianto:           ExtractField(id, "Impianto")    ?? string.Empty,
-            Dispositivo:        ExtractField(id, "Dispositivo") ?? string.Empty,
-            Anomalia:           ExtractField(id, "Anomalia")    ?? doc.TitoloDocumento,
+            Impianto:           impianto    ?? string.Empty,
+            Dispositivo:        dispositivo ?? string.Empty,
+            Anomalia:           ExtractField(id, "Anomalia") ?? doc.TitoloDocumento,
             Dtc:                ExtractDtcCodes(combined),
-            Causa:              ExtractField(id, "Causa")       ?? string.Empty,
+            Causa:              causa       ?? string.Empty,
             Intervento:         ExtractField(proc, "Intervento") ?? string.Empty,
             Nota:               ExtractField(proc, "Nota")
         );
+    }
+
+    /// <summary>
+    /// Derives Impianto and Dispositivo from pipe-separated keywords when
+    /// the identificazione chapter is absent. DTC codes and fuel types are
+    /// filtered out; short all-uppercase words are kept as acronyms (EGR, DPF).
+    /// </summary>
+    private static (string? Impianto, string? Dispositivo) ExtractFromKeywords(
+        string paroleChiave)
+    {
+        static string FormatKeyword(string s) =>
+            // Keep short all-uppercase words as acronyms (EGR, DPF, ABS…)
+            s.Length <= 5 && s == s.ToUpperInvariant()
+                ? s
+                : char.ToUpperInvariant(s[0]) + s[1..].ToLowerInvariant();
+
+        var fuelWords = new HashSet<string>(
+            ["DIESEL", "BENZINA", "GAS", "GPL", "METANO"],
+            StringComparer.OrdinalIgnoreCase);
+
+        var components = paroleChiave
+            .Split('|', StringSplitOptions.RemoveEmptyEntries)
+            .Select(k => k.Trim())
+            .Where(k => k.Length > 0
+                     && !Regex.IsMatch(k, @"^[PCBU]\d{4}$")   // not a DTC code
+                     && !fuelWords.Contains(k))                  // not a fuel type
+            .ToList();
+
+        var impianto    = components.Count > 0 ? FormatKeyword(components[0]) : null;
+        var dispositivo = components.Count > 1
+            ? string.Join(", ", components.Skip(1).Select(FormatKeyword))
+            : null;
+
+        return (impianto, dispositivo);
     }
 }
 
