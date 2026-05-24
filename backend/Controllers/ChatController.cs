@@ -35,12 +35,10 @@ public sealed class ChatController : ControllerBase
 
         try
         {
-            var confirmedEngineCode = request.Car?.CodiceMotore;
-
             await foreach (var chunk in _orchestrator.StreamAsync(
                 request.History,
                 request.Message,
-                confirmedEngineCode,
+                request.Car,
                 ct))
             {
                 await Response.WriteAsync(

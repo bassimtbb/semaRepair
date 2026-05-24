@@ -12,7 +12,7 @@ namespace SemaRepair.Api.Services;
 ///
 /// Tools:
 ///   FindCar           — structured SQL search for car configurations
-///   SearchByFaultCode — full-text + ILIKE search for fault code documents
+///   SearchByFaultCode — full-text search for fault code documents
 ///   SearchBySymptom   — semantic vector search for symptom documents
 /// </summary>
 public sealed class RepairPlugin
@@ -26,14 +26,15 @@ public sealed class RepairPlugin
         IDocumentSearchService docSearch,
         ILogger<RepairPlugin> logger)
     {
-        _db       = db;
+        _db        = db;
         _docSearch = docSearch;
-        _logger   = logger;
+        _logger    = logger;
     }
 
     /// <summary>
     /// Finds car configurations matching the given criteria.
-    /// Uses structured SQL filtering — NOT semantic search.
+    /// Returns only cars that have at least one repair document,
+    /// including the best document's sigla and title per car.
     /// </summary>
     public async Task<string> FindCarAsync(
         string? brand      = null,
@@ -53,62 +54,87 @@ public sealed class RepairPlugin
         var query = _db.CarEmbeddings.AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(brand))
-            query = query.Where(c =>
-                EF.Functions.ILike(c.MarcaMacchina, $"%{brand}%"));
+            query = query.Where(c => EF.Functions.ILike(c.MarcaMacchina, $"%{brand}%"));
 
         if (!string.IsNullOrWhiteSpace(model))
-            query = query.Where(c =>
-                EF.Functions.ILike(c.ModelloMacchina, $"%{model}%"));
+            query = query.Where(c => EF.Functions.ILike(c.ModelloMacchina, $"%{model}%"));
 
         if (yearFrom.HasValue)
-            // Car must not have ended before yearFrom
-            query = query.Where(c =>
-                c.AnnoFine == null || c.AnnoFine >= yearFrom.Value);
+            query = query.Where(c => c.AnnoFine == null || c.AnnoFine >= yearFrom.Value);
 
         if (yearTo.HasValue)
-            // Car must not have started after yearTo
-            query = query.Where(c =>
-                c.AnnoInizio == null || c.AnnoInizio <= yearTo.Value);
+            query = query.Where(c => c.AnnoInizio == null || c.AnnoInizio <= yearTo.Value);
 
         if (!string.IsNullOrWhiteSpace(fuel))
-            query = query.Where(c =>
-                EF.Functions.ILike(c.AlimentazioneMacchina ?? "", $"%{fuel}%"));
+            query = query.Where(c => EF.Functions.ILike(c.AlimentazioneMacchina ?? "", $"%{fuel}%"));
 
         if (!string.IsNullOrWhiteSpace(engineCode))
-            query = query.Where(c =>
-                c.CodiceMotoreMacchina == engineCode);
+            query = query.Where(c => c.CodiceMotoreMacchina == engineCode);
 
         if (kw.HasValue)
             query = query.Where(c => c.Kw == kw.Value);
 
-        // Group by engine code to avoid showing duplicate engine variants.
-        // Take the earliest year variant as representative.
         var cars = await query
             .GroupBy(c => new { c.CodiceMotoreMacchina, c.MarcaMacchina, c.ModelloMacchina })
             .Select(g => g.OrderBy(c => c.AnnoInizio).First())
-            .Take(6)
+            .Take(8)
             .ToListAsync(ct);
 
         if (!cars.Any())
             return "NESSUN_VEICOLO_TROVATO: Nessun veicolo corrisponde ai criteri forniti. " +
                    "Chiedi al meccanico di specificare marca, modello o anno.";
 
+        // For each car, find its best repair document (highest grade).
+        // Only cars with at least one document are included in the result.
+        var results = new List<(string IdMacchina, string Marca, string Modello,
+            string Motorizzazione, string CodiceMotore, string Alimentazione,
+            int? AnnoInizio, int? AnnoFine, int? Kw, int? Cavalli,
+            string Sigla, string Titolo)>();
+
+        foreach (var car in cars)
+        {
+            var doc = await _docSearch.GetByCarIdAsync(car.IdMacchina, ct);
+            if (doc is null) continue;
+            results.Add((
+                car.IdMacchina,
+                car.MarcaMacchina,
+                car.ModelloMacchina,
+                car.MotorizzazioneMacchina ?? string.Empty,
+                car.CodiceMotoreMacchina,
+                car.AlimentazioneMacchina ?? string.Empty,
+                car.AnnoInizio,
+                car.AnnoFine,
+                car.Kw,
+                car.Cavalli,
+                doc.SiglaDocumento,
+                doc.TitoloDocumento
+            ));
+        }
+
+        if (!results.Any())
+            return "NESSUN_DOCUMENTO: Nessun documento di riparazione trovato per " +
+                   "i veicoli che corrispondono ai criteri. " +
+                   "Verifica i parametri del veicolo.";
+
         var sb = new StringBuilder();
-        sb.AppendLine($"Trovati {cars.Count} veicoli:");
+        sb.AppendLine($"Trovati {results.Count} veicoli con documentazione:");
         sb.AppendLine();
 
-        for (int i = 0; i < cars.Count; i++)
+        for (int i = 0; i < results.Count; i++)
         {
-            var c = cars[i];
+            var r = results[i];
             sb.AppendLine($"Opzione {i + 1}:");
-            sb.AppendLine($"  idMacchina: {c.IdMacchina}");
-            sb.AppendLine($"  marca: {c.MarcaMacchina}");
-            sb.AppendLine($"  modello: {c.ModelloMacchina}");
-            sb.AppendLine($"  motorizzazione: {c.MotorizzazioneMacchina}");
-            sb.AppendLine($"  codiceMotore: {c.CodiceMotoreMacchina}");
-            sb.AppendLine($"  alimentazione: {c.AlimentazioneMacchina}");
-            sb.AppendLine($"  anni: {c.AnnoInizio}–{c.AnnoFine}");
-            sb.AppendLine($"  potenza: {c.Kw} kW / {c.Cavalli} CV");
+            sb.AppendLine($"  idMacchina: {r.IdMacchina}");
+            sb.AppendLine($"  marca: {r.Marca}");
+            sb.AppendLine($"  modello: {r.Modello}");
+            sb.AppendLine($"  motorizzazione: {r.Motorizzazione}");
+            sb.AppendLine($"  codiceMotore: {r.CodiceMotore}");
+            sb.AppendLine($"  alimentazione: {r.Alimentazione}");
+            sb.AppendLine($"  anni: {r.AnnoInizio}–{r.AnnoFine}");
+            sb.AppendLine($"  potenza: {r.Kw} kW / {r.Cavalli} CV");
+            sb.AppendLine($"  SiglaDocumento: {r.Sigla}");
+            sb.AppendLine($"  TitoloDocumento: {r.Titolo}");
+            sb.AppendLine();
         }
 
         return sb.ToString();
@@ -116,25 +142,46 @@ public sealed class RepairPlugin
 
     /// <summary>
     /// Searches repair documents by fault code (codice guasto).
-    /// Uses full-text search first, falls back to ILIKE.
     /// </summary>
     public async Task<string> SearchByFaultCodeAsync(
         string faultCode,
         string? engineCode = null,
+        string? brand = null,
         CancellationToken ct = default)
     {
         _logger.LogInformation(
-            "SearchByFaultCode: code={Code} engine={Engine}",
-            faultCode, engineCode);
+            "SearchByFaultCode: code={Code} engine={Engine} brand={Brand}",
+            faultCode, engineCode, brand);
 
-        var docs = await _docSearch.SearchByDtcAsync(faultCode, engineCode, ct);
+        var docs = await _docSearch.SearchByDtcAsync(faultCode, engineCode, brand, ct);
 
         if (!docs.Any())
             return $"NESSUN_DOCUMENTO: Nessun caso documentato trovato per il " +
                    $"codice {faultCode}" +
-                   (engineCode != null ? $" sul motore {engineCode}" : "") + ".";
+                   (engineCode != null ? $" sul motore {engineCode}" : "") +
+                   (brand      != null ? $" per la marca/modello {brand}" : "") + ".";
 
-        return FormatDocuments(docs, faultCode, showCars: true);
+        // When a brand/model filter is active, strip cars that don't match from
+        // the display list so Gemini only shows vehicles relevant to the filter.
+        IReadOnlyList<RepairDocumentResult> displayDocs = docs;
+        if (brand is not null)
+        {
+            displayDocs = docs
+                .Select(d => d with
+                {
+                    Cars = d.Cars
+                        .Where(c => MatchesBrandFilter(c, brand))
+                        .ToList()
+                })
+                .Where(d => d.Cars.Any())
+                .ToList();
+
+            if (!displayDocs.Any())
+                return $"NESSUN_DOCUMENTO: Nessun caso documentato trovato per il " +
+                       $"codice {faultCode} per la marca/modello {brand}.";
+        }
+
+        return FormatDocuments(displayDocs, faultCode, showCars: true);
     }
 
     /// <summary>
@@ -143,44 +190,45 @@ public sealed class RepairPlugin
     public async Task<string> SearchBySymptomAsync(
         string symptom,
         string? engineCode = null,
+        string? brand = null,
         CancellationToken ct = default)
     {
         _logger.LogInformation(
-            "SearchBySymptom: symptom={Symptom} engine={Engine}",
-            symptom, engineCode);
+            "SearchBySymptom: symptom={Symptom} engine={Engine} brand={Brand}",
+            symptom, engineCode, brand);
 
-        // topK=1 always — topK=3 returns too many loosely related documents
-        var docs = await _docSearch.SearchBySymptomAsync(symptom, engineCode, topK: 1, ct: ct);
+        var docs = await _docSearch.SearchBySymptomAsync(symptom, engineCode, brand, topK: 1, ct: ct);
 
         if (!docs.Any())
         {
             var wordCount = symptom.Trim()
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
 
-            if (wordCount <= 4)
-                return "SINTOMO_VAGO: Descrivi meglio il problema.";
+            if (wordCount <= 3)
+                return "SINTOMO_VAGO: La descrizione è troppo breve. Chiedi più dettagli.";
 
-            return "NESSUN_DOCUMENTO: Nessun caso documentato trovato.";
+            return "NESSUN_DOCUMENTO: Nessun caso documentato trovato" +
+                   (brand != null ? $" per la marca/modello {brand}" : "") + ".";
         }
 
-        // If no car is confirmed, return only the car list.
-        // The mechanic must select their car before seeing the procedure.
-        if (engineCode is null)
+        // No confirmed car — return a flat car list so the mechanic can select theirs.
+        // Also use car-list path when brand is provided (B1b refinement): the mechanic
+        // must still click to confirm their specific variant even with a brand filter.
+        if (engineCode is null || brand is not null)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("SELEZIONA_VEICOLO: Ho trovato casi documentati " +
-                          "per questo problema. Il meccanico deve prima " +
-                          "selezionare il suo veicolo.");
-            sb.AppendLine();
-            sb.AppendLine("Veicoli con casi documentati per questo problema:");
+            sb.AppendLine("SELEZIONA_VEICOLO: Ho trovato casi documentati per questo problema.");
+            sb.AppendLine("Veicoli con casi documentati:");
             sb.AppendLine();
 
             foreach (var doc in docs.Take(1))
             {
-                sb.AppendLine($"Documento: {doc.SiglaDocumento} — {doc.TitoloDocumento}");
-                sb.AppendLine("Veicoli applicabili:");
+                // When brand filter is active, only show cars matching that brand/model
+                var filteredCars = brand is not null
+                    ? doc.Cars.Where(c => MatchesBrandFilter(c, brand))
+                    : doc.Cars;
 
-                var uniqueCars = doc.Cars
+                var uniqueCars = filteredCars
                     .GroupBy(c => new { c.Marca, c.Modello, c.CodiceMotore, c.Alimentazione })
                     .Select(g => g.OrderBy(c => c.AnnoInizio).First())
                     .Take(6)
@@ -193,7 +241,9 @@ public sealed class RepairPlugin
                         $"{car.Marca} {car.Modello} {car.Motorizzazione} " +
                         $"({car.CodiceMotore}) | {car.Alimentazione} | " +
                         $"{car.AnnoInizio}–{car.AnnoFine} | " +
-                        $"{car.Kw}kw/{car.Cavalli}cv");
+                        $"{car.Kw}kw/{car.Cavalli}cv | " +
+                        $"SiglaDocumento: {doc.SiglaDocumento} | " +
+                        $"TitoloDocumento: {doc.TitoloDocumento}");
                 }
                 sb.AppendLine();
             }
@@ -201,10 +251,18 @@ public sealed class RepairPlugin
             return sb.ToString();
         }
 
-        // Car is confirmed — omit cars list so Gemini doesn't confuse it
-        // with a selection prompt and incorrectly returns symptom_cars phase
+        // Car is confirmed — return document details directly.
         return FormatDocuments(docs, null, showCars: false);
     }
+
+    /// <summary>
+    /// Returns true when a car's brand or model matches every token in the
+    /// brand filter string (e.g. "FIAT Ducato" → "FIAT" ∩ "Ducato").
+    /// </summary>
+    private static bool MatchesBrandFilter(CarInfo car, string brand) =>
+        brand.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+             .All(t => car.Marca.Contains(t,   StringComparison.OrdinalIgnoreCase) ||
+                       car.Modello.Contains(t, StringComparison.OrdinalIgnoreCase));
 
     private static string FormatDocuments(
         IReadOnlyList<RepairDocumentResult> docs,
@@ -231,20 +289,22 @@ public sealed class RepairPlugin
             sb.AppendLine($"Nota: {extracted.Nota ?? "nessuna"}");
             sb.AppendLine();
 
-            // Only show applicable cars when explicitly requested.
-            // When the car is already confirmed, omitting this section prevents
-            // Gemini from confusing the car list with a selection prompt.
             if (showCars && doc.Cars.Any())
             {
                 sb.AppendLine("Veicoli applicabili:");
                 foreach (var car in doc.Cars
                     .GroupBy(c => c.CodiceMotore)
                     .Select(g => g.First())
-                    .Take(5))
+                    .Take(6))
                 {
                     sb.AppendLine(
-                        $"  - {car.Marca} {car.Modello} {car.Motorizzazione} " +
-                        $"({car.CodiceMotore}) {car.AnnoInizio}–{car.AnnoFine}");
+                        $"  idMacchina: {car.IdMacchina} | " +
+                        $"{car.Marca} {car.Modello} {car.Motorizzazione} " +
+                        $"({car.CodiceMotore}) | {car.Alimentazione} | " +
+                        $"{car.AnnoInizio}–{car.AnnoFine} | " +
+                        $"{car.Kw}kw/{car.Cavalli}cv | " +
+                        $"SiglaDocumento: {doc.SiglaDocumento} | " +
+                        $"TitoloDocumento: {doc.TitoloDocumento}");
                 }
                 sb.AppendLine();
             }

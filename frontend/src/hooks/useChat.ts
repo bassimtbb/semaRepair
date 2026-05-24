@@ -16,11 +16,25 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { streamChat } from '../services/chat.api'
+import { fetchDocument, fetchDocumentByCar } from '../services/document.api'
 import type { ChatMessage, ConfirmedCar, HistoryItem } from '../types/chat.types'
-import type { ApiResponse, CarOption, DtcCarOption } from '../types/api.types'
+import type { ApiResponse, SearchResultCar, RepairCase, RepairResponse } from '../types/api.types'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+const NOT_DOCUMENTED: RepairResponse = {
+  phase: 'chat',
+  found: false,
+  message: 'Non abbiamo questo problema documentato per il veicolo selezionato.',
+  cases: [],
+}
+
+/** Returns true when the fetched document covers the given engine code. */
+function isDocForEngine(doc: RepairCase, codiceMotore: string | undefined): boolean {
+  if (!codiceMotore) return true  // no confirmed car — skip verification
+  return doc.engineCodes.includes(codiceMotore)
 }
 
 export function useChat() {
@@ -195,6 +209,34 @@ export function useChat() {
         }
       }
 
+      // Re-fetch any inline repair cases from the database (SCHEMA D path).
+      // Gemini embeds document fields directly in the stream — re-fetching via the
+      // API ensures the displayed content always comes from the database, not LLM generation.
+      // After fetching, verify each case applies to the confirmed car's engine code.
+      if (parsedResponse?.phase === 'chat' && parsedResponse.found && parsedResponse.cases.length > 0) {
+        const engineCode = carToUse?.codiceMotore
+        const fetchedCases = await Promise.all(
+          parsedResponse.cases.map(async (c) => {
+            try {
+              return await fetchDocument(c.sigla)
+            } catch {
+              // Sigla fetch failed (e.g. hallucinated sigla) — fall back to the
+              // confirmed car's best document so content is always from the database.
+              if (carToUse?.idMacchina) {
+                try { return await fetchDocumentByCar(carToUse.idMacchina) } catch { /* fall through */ }
+              }
+              return c
+            }
+          })
+        )
+        // Keep only cases that cover the confirmed engine; replace the rest with the
+        // "not documented" response so the user always sees accurate information.
+        const verifiedCases = fetchedCases.filter(c => isDocForEngine(c, engineCode))
+        parsedResponse = verifiedCases.length > 0
+          ? { ...parsedResponse, cases: verifiedCases }
+          : NOT_DOCUMENTED
+      }
+
       // Finalize the assistant message
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
@@ -216,12 +258,83 @@ export function useChat() {
   }, [buildHistory])
 
   /**
-   * Called when the mechanic clicks a car from symptom search results.
-   * Sets the confirmed car and immediately re-sends the original symptom
-   * so the repair documents are shown for that specific car.
-   * Passes the confirmed car directly to sendMessage to avoid ref timing races.
+   * Adds a synthetic document message when the mechanic selects a car.
+   * Fetches the repair document directly — no Gemini call needed.
    */
-  const selectSymptomCar = useCallback((car: CarOption) => {
+  const addDocumentMessage = useCallback(async (
+    userText: string,
+    siglaDocumento: string,
+    idMacchina: string,
+  ) => {
+    if (isProcessingRef.current) return
+    isProcessingRef.current = true
+
+    const userMsgId = generateId()
+    const assistantMsgId = generateId()
+
+    setMessages(prev => [...prev,
+      { id: userMsgId, role: 'user', rawContent: userText, parsed: null, isStreaming: false, timestamp: new Date() },
+      { id: assistantMsgId, role: 'assistant', rawContent: '', parsed: null, isStreaming: true, timestamp: new Date() },
+    ])
+    setIsStreaming(true)
+
+    try {
+      let doc: RepairCase
+      try {
+        doc = await fetchDocument(siglaDocumento)
+      } catch {
+        doc = await fetchDocumentByCar(idMacchina)
+      }
+      const engineCode = confirmedCarRef.current?.codiceMotore
+      const repairResponse: RepairResponse = isDocForEngine(doc, engineCode)
+        ? { phase: 'chat', found: true, message: 'Ecco la procedura di riparazione per il tuo veicolo.', cases: [doc] }
+        : NOT_DOCUMENTED
+      setMessages(prev => prev.map(m =>
+        m.id === assistantMsgId
+          ? { ...m, rawContent: JSON.stringify(repairResponse), parsed: repairResponse, isStreaming: false }
+          : m
+      ))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Errore sconosciuto'
+      setMessages(prev => prev.map(m =>
+        m.id === assistantMsgId
+          ? { ...m, rawContent: `Errore: ${msg}`, isStreaming: false }
+          : m
+      ))
+    } finally {
+      setIsStreaming(false)
+      isProcessingRef.current = false
+    }
+  }, [])
+
+  const selectSymptomCar = useCallback((car: SearchResultCar) => {
+    const confirmed: ConfirmedCar = {
+      idMacchina: car.idMacchina,
+      marca: car.marca,
+      modello: car.modello,
+      motorizzazione: car.motorizzazione,
+      codiceMotore: car.codiceMotore,
+      alimentazione: car.alimentazione,
+      annoInizio: car.annoInizio,
+      annoFine: car.annoFine,
+      kw: car.kw,
+      cavalli: car.cavalli,
+    }
+    setConfirmedCar(confirmed)
+    confirmedCarRef.current = confirmed
+    addDocumentMessage(
+      `Seleziono ${car.marca} ${car.modello} ${car.motorizzazione}`,
+      car.siglaDocumento,
+      car.idMacchina,
+    )
+  }, [addDocumentMessage])
+
+  /**
+   * Called when the mechanic clicks a car option during identification (FindCar results).
+   * At this point no problem has been described yet, so we must NOT fetch a document.
+   * We confirm the car and prompt the mechanic to describe the problem.
+   */
+  const selectCar = useCallback((car: SearchResultCar) => {
     const confirmed: ConfirmedCar = {
       idMacchina: car.idMacchina,
       marca: car.marca,
@@ -237,26 +350,27 @@ export function useChat() {
     setConfirmedCar(confirmed)
     confirmedCarRef.current = confirmed
 
-    const originalQuery = originalQueryRef.current
-    if (originalQuery) {
-      // Pass confirmed directly — do not rely on ref being read after re-render
-      setTimeout(() => sendMessage(originalQuery, confirmed), 50)
+    const confirmationResponse: RepairResponse = {
+      phase: 'chat',
+      found: false,
+      message: `Veicolo confermato: ${car.marca} ${car.modello} ${car.motorizzazione}. Descrivi il problema o inserisci un codice guasto per trovare la procedura di riparazione.`,
+      cases: [],
     }
-  }, [sendMessage])
+    setMessages(prev => [...prev,
+      {
+        id: generateId(), role: 'user',
+        rawContent: `Seleziono ${car.marca} ${car.modello} ${car.motorizzazione}`,
+        parsed: null, isStreaming: false, timestamp: new Date(),
+      },
+      {
+        id: generateId(), role: 'assistant',
+        rawContent: JSON.stringify(confirmationResponse),
+        parsed: confirmationResponse, isStreaming: false, timestamp: new Date(),
+      },
+    ])
+  }, [])
 
-  /** Called when the mechanic clicks a car option during identification. */
-  const selectCar = useCallback((car: CarOption) => {
-    sendMessage(
-      `Confermo il veicolo: ${car.marca} ${car.modello} ` +
-      `${car.motorizzazione} (${car.codiceMotore})`
-    )
-  }, [sendMessage])
-
-  /**
-   * Called when the mechanic selects a car from DTC search results.
-   * Passes the confirmed car directly to avoid ref timing races.
-   */
-  const selectDtcCar = useCallback((car: DtcCarOption, dtcCode: string) => {
+  const selectDtcCar = useCallback((car: SearchResultCar, dtcCode: string) => {
     const confirmed: ConfirmedCar = {
       idMacchina: car.idMacchina,
       marca: car.marca,
@@ -271,21 +385,12 @@ export function useChat() {
     }
     setConfirmedCar(confirmed)
     confirmedCarRef.current = confirmed
-    sendMessage(
-      `Seleziono ${car.marca} ${car.modello} ${car.motorizzazione} ` +
-      `per il codice ${dtcCode}`,
-      confirmed
+    addDocumentMessage(
+      `Seleziono ${car.marca} ${car.modello} ${car.motorizzazione} per il codice ${dtcCode}`,
+      car.siglaDocumento,
+      car.idMacchina,
     )
-  }, [sendMessage])
-
-  /**
-   * Called when the mechanic clicks "Il mio veicolo non è in questa lista"
-   * under a DTC car selection. Sends a pre-formatted message so Gemini has
-   * the explicit DTC code in context and returns an ask_car response.
-   */
-  const dtcVehicleNotFound = useCallback((dtcCode: string) => {
-    sendMessage(`Il mio veicolo non è nella lista per il codice ${dtcCode}`)
-  }, [sendMessage])
+  }, [addDocumentMessage])
 
   /** Resets the entire conversation. */
   const resetCar = useCallback(() => {
@@ -297,5 +402,5 @@ export function useChat() {
     isProcessingRef.current = false
   }, [])
 
-  return { messages, confirmedCar, isStreaming, sendMessage, selectCar, selectDtcCar, selectSymptomCar, resetCar, dtcVehicleNotFound }
+  return { messages, confirmedCar, isStreaming, sendMessage, selectCar, selectDtcCar, selectSymptomCar, resetCar }
 }

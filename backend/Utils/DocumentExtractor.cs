@@ -148,6 +148,7 @@ public static class DocumentExtractor
             Dtc:                ExtractDtcCodes(combined),
             Causa:              causa       ?? string.Empty,
             Intervento:         ExtractField(proc, "Intervento") ?? string.Empty,
+            ProceduraDetail:    ExtractField(proc, "Procedura"),
             Nota:               ExtractField(proc, "Nota")
         );
     }
@@ -201,5 +202,6 @@ public sealed record PreExtractedCase(
     List<string> Dtc,
     string Causa,
     string Intervento,
+    string? ProceduraDetail,
     string? Nota
 );

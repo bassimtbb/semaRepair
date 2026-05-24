@@ -158,11 +158,13 @@ export function RepairCaseCard({ repairCase: rc }: Props) {
         <div style={{ padding: '6px 16px 14px' }}>
           <ul style={UL_STYLE}>
             <li style={LI_STYLE}>
-              <strong>Intervento:</strong> {rc.procedura}
+              <strong>Intervento:</strong> {rc.intervento}
             </li>
-            <li style={LI_STYLE}>
-              <strong>Procedura:</strong> - -
-            </li>
+            {rc.procedura && (
+              <li style={LI_STYLE}>
+                <strong>Procedura:</strong> {rc.procedura}
+              </li>
+            )}
             {rc.nota && (
               <li style={LI_STYLE}>
                 <strong>Nota:</strong> {rc.nota}

@@ -1,17 +1,16 @@
 import { useEffect, useRef } from 'react'
 import type { ChatMessage } from '../../types/chat.types'
-import type { CarOption, DtcCarOption } from '../../types/api.types'
+import type { SearchResultCar } from '../../types/api.types'
 import { MessageBubble } from './MessageBubble'
 
 interface Props {
   messages: ChatMessage[]
-  onSelectCar: (car: CarOption) => void
-  onSelectDtcCar: (car: DtcCarOption, dtcCode: string) => void
-  onSymptomCarSelect: (car: CarOption) => void
-  onDtcVehicleNotFound: (dtcCode: string) => void
+  onSelectCar: (car: SearchResultCar) => void
+  onSelectDtcCar: (car: SearchResultCar, dtcCode: string) => void
+  onSymptomCarSelect: (car: SearchResultCar) => void
 }
 
-export function MessageList({ messages, onSelectCar, onSelectDtcCar, onSymptomCarSelect, onDtcVehicleNotFound }: Props) {
+export function MessageList({ messages, onSelectCar, onSelectDtcCar, onSymptomCarSelect }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -50,7 +49,6 @@ export function MessageList({ messages, onSelectCar, onSelectDtcCar, onSymptomCa
           onSelectCar={onSelectCar}
           onSelectDtcCar={onSelectDtcCar}
           onSymptomCarSelect={onSymptomCarSelect}
-          onDtcVehicleNotFound={onDtcVehicleNotFound}
         />
       ))}
       <div ref={bottomRef} />

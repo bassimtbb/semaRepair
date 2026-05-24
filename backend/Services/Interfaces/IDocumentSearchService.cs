@@ -25,6 +25,7 @@ public interface IDocumentSearchService
     Task<IReadOnlyList<RepairDocumentResult>> SearchByDtcAsync(
         string dtcCode,
         string? codiceMotore = null,
+        string? brand = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -41,6 +42,7 @@ public interface IDocumentSearchService
     Task<IReadOnlyList<RepairDocumentResult>> SearchBySymptomAsync(
         string symptom,
         string? codiceMotore = null,
+        string? brand = null,
         int topK = 3,
         CancellationToken ct = default);
 
@@ -54,5 +56,22 @@ public interface IDocumentSearchService
     Task<IReadOnlyList<RepairDocumentResult>> SearchBySymptomNoCarAsync(
         string symptom,
         int topK = 1,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Fetches a single repair document by its unique sigla identifier.
+    /// Returns null if not found.
+    /// </summary>
+    Task<RepairDocumentResult?> GetBySiglaAsync(
+        string siglaDocumento,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Fetches the highest-grade repair document associated with a given car.
+    /// Used as a fallback when siglaDocumento was corrupted by the LLM.
+    /// Returns null if no document is associated with this car.
+    /// </summary>
+    Task<RepairDocumentResult?> GetByCarIdAsync(
+        string idMacchina,
         CancellationToken ct = default);
 }

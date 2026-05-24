@@ -1,212 +1,248 @@
+import { type ReactNode } from 'react'
 import type { ChatMessage } from '../../types/chat.types'
-import type { CarOption, DtcCarOption } from '../../types/api.types'
+import type {
+  SearchResultCar,
+  IdentificationResponse,
+  DtcCarsResponse,
+  AskCarResponse,
+  SymptomCarsResponse,
+  RepairResponse,
+} from '../../types/api.types'
 import { TypingIndicator } from '../ui/TypingIndicator'
-import { CarOptionCard } from '../cards/CarOptionCard'
-import { DtcCarCard } from '../cards/DtcCarCard'
+import { CarCard } from '../cards/CarCard'
 import { RepairCaseCard } from '../cards/RepairCaseCard'
-import { SymptomCarCard } from '../cards/SymptomCarCard'
 
 interface Props {
   message: ChatMessage
-  onSelectCar: (car: CarOption) => void
-  onSelectDtcCar: (car: DtcCarOption, dtcCode: string) => void
-  onSymptomCarSelect: (car: CarOption) => void
-  onDtcVehicleNotFound: (dtcCode: string) => void
+  onSelectCar: (car: SearchResultCar) => void
+  onSelectDtcCar: (car: SearchResultCar, dtcCode: string) => void
+  onSymptomCarSelect: (car: SearchResultCar) => void
 }
 
-export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomCarSelect, onDtcVehicleNotFound }: Props) {
-  const isUser = message.role === 'user'
-  const p = message.parsed
+// ── Shared styles ─────────────────────────────────────────────────────────────
 
-  if (isUser) {
+const BUBBLE_BASE = {
+  background: '#ffffff',
+  border: '1px solid #e2e8f0',
+  borderRadius: '18px 18px 18px 4px',
+} as const
+
+const LIST_HEADER_STYLE = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: '#1e293b',
+  marginBottom: 4,
+} as const
+
+const LIST_INTRO_STYLE = {
+  fontSize: 12,
+  color: '#64748b',
+  marginBottom: 10,
+  fontStyle: 'italic',
+} as const
+
+// ── Primitive wrappers ────────────────────────────────────────────────────────
+
+function UserBubble({ content }: { content: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+      <div style={{
+        background: '#1a3a6b',
+        color: '#ffffff',
+        borderRadius: '16px 16px 4px 16px',
+        padding: '8px 14px',
+        maxWidth: '75%',
+        fontSize: 14,
+        lineHeight: 1.5,
+        wordBreak: 'break-word',
+      }}>
+        {content}
+      </div>
+    </div>
+  )
+}
+
+function AssistantBubble({ children, inline }: { children: ReactNode; inline?: boolean }) {
+  return (
+    <div style={{
+      ...BUBBLE_BASE,
+      padding: inline ? '10px 14px' : '12px 14px',
+      color: '#1e293b',
+      display: inline ? 'inline-block' : undefined,
+    }}>
+      {children}
+    </div>
+  )
+}
+
+// ── Phase components ──────────────────────────────────────────────────────────
+
+function IdentificationPhase({
+  p,
+  onSelectCar,
+}: {
+  p: IdentificationResponse
+  onSelectCar: (car: SearchResultCar) => void
+}) {
+  if (p.confirmed || !p.carMatches?.length) return null
+  return (
+    <div style={{ marginTop: p.message ? 12 : 0 }}>
+      <div style={LIST_HEADER_STYLE}>Seleziona il veicolo per questa ricerca</div>
+      <div style={LIST_INTRO_STYLE}>
+        Se il veicolo non è in questa lista, fornisci altri dettagli o aggiungi una descrizione del problema / codice guasto per una ricerca più precisa.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {p.carMatches.map((car, i) => (
+          <CarCard key={car.idMacchina ?? i} car={car} index={i} titoloDocumento={car.titoloDocumento} onSelect={() => onSelectCar(car)} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function DtcPhase({
+  p,
+  onSelectDtcCar,
+}: {
+  p: DtcCarsResponse
+  onSelectDtcCar: (car: SearchResultCar, dtcCode: string) => void
+}) {
+  if (!p.cars.length) return null
+  return (
+    <div style={{ marginTop: p.message ? 12 : 0 }}>
+      <div style={LIST_HEADER_STYLE}>Seleziona il veicolo per questo problema</div>
+      <div style={LIST_INTRO_STYLE}>
+        Se il veicolo non è in questa lista, fornisci ulteriori dettagli (modello, motore e altri parametri di ricerca) per affinare la ricerca.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {p.cars.map((car, i) => (
+          <CarCard
+            key={car.idMacchina ?? i}
+            car={car}
+            index={i}
+            titoloDocumento={car.titoloDocumento}
+            onSelect={() => onSelectDtcCar(car, p.dtcCode)}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function AskCarPhase({ p }: { p: AskCarResponse }) {
+  return (
+    <div style={{
+      marginTop: 8,
+      padding: '8px 12px',
+      background: '#f0f9ff',
+      border: '1px solid #bae6fd',
+      borderRadius: 8,
+      fontSize: 13,
+      color: '#0369a1',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+    }}>
+      <span>🔍</span>
+      <span>Codice rilevato: <strong>{p.codeDetected}</strong></span>
+    </div>
+  )
+}
+
+function SymptomPhase({
+  p,
+  onSymptomCarSelect,
+}: {
+  p: SymptomCarsResponse
+  onSymptomCarSelect: (car: SearchResultCar) => void
+}) {
+  if (!p.cars.length) return null
+  return (
+    <div style={{ marginTop: p.message ? 12 : 0 }}>
+      <div style={LIST_HEADER_STYLE}>Seleziona il veicolo per questo problema</div>
+      <div style={LIST_INTRO_STYLE}>
+        Se il veicolo non è in questa lista, fornisci ulteriori dettagli (modello, motore e altri parametri di ricerca) per affinare la ricerca.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {p.cars.map((car, i) => (
+          <CarCard
+            key={car.idMacchina ?? i}
+            car={car}
+            index={i}
+            titoloDocumento={car.titoloDocumento}
+            onSelect={() => onSymptomCarSelect(car)}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ChatPhase({ p }: { p: RepairResponse }) {
+  if (!p.found) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <div style={{
-          background: '#1a3a6b',
-          color: '#ffffff',
-          borderRadius: '16px 16px 4px 16px',
-          padding: '8px 14px',
-          maxWidth: '75%',
-          fontSize: 14,
-          lineHeight: 1.5,
-          wordBreak: 'break-word',
-        }}>
-          {message.rawContent}
-        </div>
+      <div style={{
+        background: '#fffbeb',
+        border: '1px solid #fcd34d',
+        borderLeft: '4px solid #f59e0b',
+        borderRadius: 8,
+        padding: '14px 16px',
+        fontSize: 14,
+        color: '#92400e',
+        lineHeight: 1.6,
+      }}>
+        {p.message}
       </div>
     )
   }
+  if (!p.cases.length) return null
+  return (
+    <div style={{ marginTop: p.message ? 12 : 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {p.cases.map((caso, i) => (
+        <RepairCaseCard key={i} repairCase={caso} />
+      ))}
+    </div>
+  )
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomCarSelect }: Props) {
+  const p = message.parsed
+
+  if (message.role === 'user') return <UserBubble content={message.rawContent} />
 
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
       <div style={{ maxWidth: '85%', minWidth: 60 }}>
 
-        {/* Typing dots — while streaming and no parsed result yet */}
         {message.isStreaming && !p && (
-          <div style={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            borderRadius: '18px 18px 18px 4px',
-            padding: '10px 14px',
-            display: 'inline-block',
-          }}>
+          <AssistantBubble inline>
             <TypingIndicator />
-          </div>
+          </AssistantBubble>
         )}
 
-        {/* Parsed response */}
         {p && (
-          <div style={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            borderRadius: '18px 18px 18px 4px',
-            padding: '12px 14px',
-            color: '#1e293b',
-          }}>
-            {/* Plain message — suppressed for chat+not-found (warning card owns it) */}
+          <AssistantBubble>
             {p.message && !(p.phase === 'chat' && !p.found) && (
-              <p style={{ fontSize: 14, lineHeight: 1.6, margin: 0, color: '#1e293b' }}>
+              <p style={{ fontSize: 14, lineHeight: 1.6, margin: '0 0 4px', color: '#1e293b' }}>
                 {p.message}
               </p>
             )}
-
-            {/* Identification: car option cards */}
-            {p.phase === 'identification' && !p.confirmed && p.carMatches && p.carMatches.length > 0 && (
-              <div style={{ marginTop: p.message ? 12 : 0 }}>
-                <div style={{
-                  fontSize: 12,
-                  color: '#64748b',
-                  marginBottom: 6,
-                  fontStyle: 'italic',
-                }}>
-                  👆 Clicca sul tuo veicolo per confermarlo
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {p.carMatches.map((car, i) => (
-                    <CarOptionCard key={car.idMacchina ?? i} car={car} index={i} onSelect={onSelectCar} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* DTC car selection cards */}
-            {p.phase === 'dtc_cars' && p.cars && p.cars.length > 0 && p.dtcCode && (
-              <div style={{ marginTop: p.message ? 12 : 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {p.cars.map((car, i) => (
-                  <DtcCarCard
-                    key={car.idMacchina ?? i}
-                    car={car}
-                    dtcCode={p.dtcCode!}
-                    index={i}
-                    onSelect={onSelectDtcCar}
-                  />
-                ))}
-                <button
-                  onClick={() => onDtcVehicleNotFound(p.dtcCode!)}
-                  style={{
-                    background: 'transparent',
-                    border: '1px dashed #cbd5e1',
-                    borderRadius: 8,
-                    padding: '8px 14px',
-                    color: '#64748b',
-                    fontSize: 12,
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    marginTop: 4,
-                  }}
-                >
-                  Il mio veicolo non è in questa lista →
-                </button>
-              </div>
-            )}
-
-            {/* ask_car phase — message already shown above; badge highlights the detected code */}
-            {p.phase === 'ask_car' && (
-              <div style={{
-                marginTop: 8,
-                padding: '8px 12px',
-                background: '#f0f9ff',
-                border: '1px solid #bae6fd',
-                borderRadius: 8,
-                fontSize: 13,
-                color: '#0369a1',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}>
-                <span>🔍</span>
-                <span>Codice rilevato: <strong>{p.codeDetected}</strong></span>
-              </div>
-            )}
-
-            {/* Symptom car selection */}
-            {p.phase === 'symptom_cars' && p.documents && p.documents.length > 0 && (
-              <div style={{ marginTop: p.message ? 12 : 0 }}>
-                <div style={{
-                  fontSize: 12,
-                  color: '#64748b',
-                  marginBottom: 6,
-                  fontStyle: 'italic',
-                }}>
-                  👆 Clicca sul tuo veicolo per vedere la procedura di riparazione
-                </div>
-                {p.documents.map(doc => (
-                  <SymptomCarCard
-                    key={doc.siglaDocumento}
-                    document={doc}
-                    onSelect={onSymptomCarSelect}
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* Repair cases — found=true */}
-            {p.phase === 'chat' && p.found && p.cases && p.cases.length > 0 && (
-              <div style={{ marginTop: p.message ? 12 : 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {p.cases.map((caso, i) => (
-                  <RepairCaseCard key={i} repairCase={caso} />
-                ))}
-              </div>
-            )}
-
-            {/* No-match warning — found=false */}
-            {p.phase === 'chat' && !p.found && (
-              <div style={{
-                background: '#fffbeb',
-                border: '1px solid #fcd34d',
-                borderLeft: '4px solid #f59e0b',
-                borderRadius: 8,
-                padding: '14px 16px',
-                fontSize: 14,
-                color: '#92400e',
-                lineHeight: 1.6,
-              }}>
-                <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13 }}>
-                  Nessun caso documentato trovato
-                </div>
-                <div>{p.message}</div>
-                <div style={{ marginTop: 10, fontSize: 12, color: '#a16207' }}>
-                  Prova a inserire il codice guasto dal diagnostico per una ricerca più precisa.
-                </div>
-              </div>
-            )}
-          </div>
+            {p.phase === 'identification' && <IdentificationPhase p={p} onSelectCar={onSelectCar} />}
+            {p.phase === 'dtc_cars'       && <DtcPhase p={p} onSelectDtcCar={onSelectDtcCar} />}
+            {p.phase === 'ask_car'        && <AskCarPhase p={p} />}
+            {p.phase === 'symptom_cars'   && <SymptomPhase p={p} onSymptomCarSelect={onSymptomCarSelect} />}
+            {p.phase === 'chat'           && <ChatPhase p={p} />}
+          </AssistantBubble>
         )}
 
-        {/* Fallback: only shown after streaming ends if parsing failed AND content is not JSON */}
         {!p && !message.isStreaming && message.rawContent && !message.rawContent.trimStart().startsWith('{') && (
-          <div style={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            borderRadius: '18px 18px 18px 4px',
-            padding: '12px 14px',
-            color: '#1e293b',
-            fontSize: 14,
-            lineHeight: 1.6,
-          }}>
-            {message.rawContent}
-          </div>
+          <AssistantBubble>
+            <span style={{ fontSize: 14, lineHeight: 1.6 }}>{message.rawContent}</span>
+          </AssistantBubble>
         )}
+
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-/** Car option shown during identification or DTC selection */
+/** Car option shown during identification */
 export interface CarOption {
   idMacchina: string
   marca: string
@@ -12,30 +12,38 @@ export interface CarOption {
   cavalli: number | null
 }
 
-/** Car from DTC search — includes the document reference */
-export interface DtcCarOption extends CarOption {
+/** Car from a search result — always has an associated document reference */
+export interface SearchResultCar extends CarOption {
   siglaDocumento: string
   titoloDocumento: string
 }
 
-/** One structured repair case extracted by the LLM */
+/** Car from DTC search — alias of SearchResultCar for backward compatibility */
+export type DtcCarOption = SearchResultCar
+
+/** One structured repair case returned from the document endpoint */
 export interface RepairCase {
   sigla: string
   titolo: string
-  stelle: number        // 1, 2, or 3
+  stelle: number
   impianto: string
   dispositivo: string
   causa: string
   dtc: string[]
-  procedura: string
+  /** Intervento subfield from the Procedura chapter (CONTENUTO_DOCUMENTO) */
+  intervento: string
+  /** Procedura subfield — null when the source value is a placeholder (- -) */
+  procedura: string | null
   nota: string | null
+  /** Engine codes of all cars this document applies to — used to verify relevance */
+  engineCodes: string[]
 }
 
 /** Response when identifying the car */
 export interface IdentificationResponse {
   phase: 'identification'
   message: string
-  carMatches: CarOption[]
+  carMatches: SearchResultCar[]
   confirmed: boolean
   confirmedCar: CarOption | null
 }
@@ -45,7 +53,7 @@ export interface DtcCarsResponse {
   phase: 'dtc_cars'
   dtcCode: string
   message: string
-  cars: DtcCarOption[]
+  cars: SearchResultCar[]
   selectedCar: CarOption | null
 }
 
@@ -57,18 +65,11 @@ export interface RepairResponse {
   cases: RepairCase[]
 }
 
-/** Document with associated cars — shown during symptom search */
-export interface SymptomDocument {
-  siglaDocumento: string
-  titoloDocumento: string
-  cars: CarOption[]
-}
-
-/** Response when symptom search finds matching documents */
+/** Response when symptom or vehicle-only search finds matching cars */
 export interface SymptomCarsResponse {
   phase: 'symptom_cars'
   message: string
-  documents: SymptomDocument[]
+  cars: SearchResultCar[]
   selectedCar: CarOption | null
 }
 

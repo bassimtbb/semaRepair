@@ -31,10 +31,11 @@ public sealed class DocumentSearchService : IDocumentSearchService
     public async Task<IReadOnlyList<RepairDocumentResult>> SearchByDtcAsync(
         string dtcCode,
         string? codiceMotore = null,
+        string? brand = null,
         CancellationToken ct = default)
     {
         _logger.LogDebug(
-            "DTC search: code={Code}, engine={Engine}", dtcCode, codiceMotore);
+            "DTC search: code={Code}, engine={Engine}, brand={Brand}", dtcCode, codiceMotore, brand);
 
         // Normalize the DTC code — always uppercase, no spaces
         var normalizedCode = dtcCode.Trim().ToUpperInvariant();
@@ -52,6 +53,20 @@ public sealed class DocumentSearchService : IDocumentSearchService
                 rd.Cars.Any(c => c.CodiceMotoreMacchina == codiceMotore));
         }
 
+        // Brand/model filter — each token in the brand string must match either
+        // MarcaMacchina or ModelloMacchina (handles "FIAT Ducato" → "FIAT" + "Ducato").
+        if (brand is not null)
+        {
+            foreach (var token in brand.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var t = token;
+                query = query.Where(rd =>
+                    rd.Cars.Any(c =>
+                        EF.Functions.ILike(c.MarcaMacchina,   $"%{t}%") ||
+                        EF.Functions.ILike(c.ModelloMacchina, $"%{t}%")));
+            }
+        }
+
         var documents = await query
             .Include(rd => rd.Cars)
             .OrderBy(rd => rd.SiglaDocumento)
@@ -67,12 +82,13 @@ public sealed class DocumentSearchService : IDocumentSearchService
     public async Task<IReadOnlyList<RepairDocumentResult>> SearchBySymptomAsync(
         string symptom,
         string? codiceMotore = null,
+        string? brand = null,
         int topK = 3,
         CancellationToken ct = default)
     {
         _logger.LogDebug(
-            "Semantic search: symptom={Symptom}, engine={Engine}",
-            symptom, codiceMotore);
+            "Semantic search: symptom={Symptom}, engine={Engine}, brand={Brand}",
+            symptom, codiceMotore, brand);
 
         // Embed the symptom description
         var floats = await _embedding.EmbedAsync(symptom, ct);
@@ -82,11 +98,24 @@ public sealed class DocumentSearchService : IDocumentSearchService
             .Where(rd => rd.Embedding != null);
 
         // Filter to confirmed car's engine before ranking by similarity.
-        // This is critical — without it we get results from unrelated cars.
         if (codiceMotore is not null)
         {
             query = query.Where(rd =>
                 rd.Cars.Any(c => c.CodiceMotoreMacchina == codiceMotore));
+        }
+
+        // Brand/model filter — each token must match MarcaMacchina or ModelloMacchina.
+        // Splitting handles compound inputs like "FIAT Ducato" → "FIAT" ∩ "Ducato".
+        if (brand is not null)
+        {
+            foreach (var token in brand.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var t = token;
+                query = query.Where(rd =>
+                    rd.Cars.Any(c =>
+                        EF.Functions.ILike(c.MarcaMacchina,   $"%{t}%") ||
+                        EF.Functions.ILike(c.ModelloMacchina, $"%{t}%")));
+            }
         }
 
         var documents = await query
@@ -103,7 +132,7 @@ public sealed class DocumentSearchService : IDocumentSearchService
             _logger.LogInformation(
                 "Semantic search returned 0 results for engine={Engine}. Falling back to keyword search.",
                 codiceMotore);
-            return await SearchByKeywordAsync(symptom, codiceMotore, topK, ct);
+            return await SearchByKeywordAsync(symptom, codiceMotore, brand, topK, ct);
         }
 
         return documents.Select(ToResult).ToList();
@@ -135,7 +164,7 @@ public sealed class DocumentSearchService : IDocumentSearchService
             _logger.LogInformation(
                 "Symptom-only semantic search returned 0 results. " +
                 "Falling back to keyword search.");
-            return await SearchByKeywordAsync(symptom, null, topK, ct);
+            return await SearchByKeywordAsync(symptom, codiceMotore: null, brand: null, topK: topK, ct: ct);
         }
 
         _logger.LogDebug(
@@ -152,6 +181,7 @@ public sealed class DocumentSearchService : IDocumentSearchService
     private async Task<IReadOnlyList<RepairDocumentResult>> SearchByKeywordAsync(
         string query,
         string? codiceMotore = null,
+        string? brand = null,
         int topK = 3,
         CancellationToken ct = default)
     {
@@ -164,7 +194,6 @@ public sealed class DocumentSearchService : IDocumentSearchService
             return [];
 
         // Build an OR tsquery: word1 | word2 | word3 …
-        // Uses the existing GIN index on search_vector for efficiency.
         var tsQueryString = string.Join(" | ", words);
 
         var dbQuery = _db.RepairDocuments
@@ -173,6 +202,18 @@ public sealed class DocumentSearchService : IDocumentSearchService
         if (codiceMotore is not null)
             dbQuery = dbQuery.Where(rd =>
                 rd.Cars.Any(c => c.CodiceMotoreMacchina == codiceMotore));
+
+        if (brand is not null)
+        {
+            foreach (var token in brand.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var t = token;
+                dbQuery = dbQuery.Where(rd =>
+                    rd.Cars.Any(c =>
+                        EF.Functions.ILike(c.MarcaMacchina,   $"%{t}%") ||
+                        EF.Functions.ILike(c.ModelloMacchina, $"%{t}%")));
+            }
+        }
 
         var results = await dbQuery
             .Where(rd => rd.SearchVector!.Matches(
@@ -186,6 +227,32 @@ public sealed class DocumentSearchService : IDocumentSearchService
             results.Count, codiceMotore);
 
         return results.Select(ToResult).ToList();
+    }
+
+    /// <inheritdoc/>
+    public async Task<RepairDocumentResult?> GetBySiglaAsync(
+        string siglaDocumento,
+        CancellationToken ct = default)
+    {
+        var doc = await _db.RepairDocuments
+            .Include(rd => rd.Cars)
+            .FirstOrDefaultAsync(rd => rd.SiglaDocumento == siglaDocumento, ct);
+
+        return doc is null ? null : ToResult(doc);
+    }
+
+    /// <inheritdoc/>
+    public async Task<RepairDocumentResult?> GetByCarIdAsync(
+        string idMacchina,
+        CancellationToken ct = default)
+    {
+        var doc = await _db.RepairDocuments
+            .Include(rd => rd.Cars)
+            .Where(rd => rd.Cars.Any(c => c.IdMacchina == idMacchina))
+            .OrderByDescending(rd => rd.GradoAttendibilita)
+            .FirstOrDefaultAsync(ct);
+
+        return doc is null ? null : ToResult(doc);
     }
 
     /// <summary>
