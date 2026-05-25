@@ -16,7 +16,7 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { streamChat } from '../services/chat.api'
-import { fetchDocument, fetchDocumentByCar } from '../services/document.api'
+import { fetchDocument, fetchDocumentByCar, fetchAlternativeDocument } from '../services/document.api'
 import type { ChatMessage, ConfirmedCar, HistoryItem } from '../types/chat.types'
 import type { ApiResponse, SearchResultCar, RepairCase, RepairResponse } from '../types/api.types'
 
@@ -331,8 +331,15 @@ export function useChat() {
 
   /**
    * Called when the mechanic clicks a car option during identification (FindCar results).
-   * At this point no problem has been described yet, so we must NOT fetch a document.
-   * We confirm the car and prompt the mechanic to describe the problem.
+   *
+   * Two sub-cases:
+   *   A) The mechanic already described a problem before the car was identified
+   *      (e.g. symptom → car list via B1b-SPECS → click).
+   *      Re-send the original query immediately with the confirmed car so the
+   *      mechanic never has to type the symptom twice.
+   *
+   *   B) No problem has been described yet (pure vehicle-lookup flow).
+   *      Just confirm the car and ask for the problem.
    */
   const selectCar = useCallback((car: SearchResultCar) => {
     const confirmed: ConfirmedCar = {
@@ -350,25 +357,33 @@ export function useChat() {
     setConfirmedCar(confirmed)
     confirmedCarRef.current = confirmed
 
-    const confirmationResponse: RepairResponse = {
-      phase: 'chat',
-      found: false,
-      message: `Veicolo confermato: ${car.marca} ${car.modello} ${car.motorizzazione}. Descrivi il problema o inserisci un codice guasto per trovare la procedura di riparazione.`,
-      cases: [],
+    const originalQuery = originalQueryRef.current
+    if (originalQuery) {
+      // Re-run the original symptom search with the now-confirmed car.
+      // Using setTimeout to let the state update settle before sendMessage runs.
+      setTimeout(() => { sendMessage(originalQuery, confirmed) }, 100)
+    } else {
+      // No symptom on record — confirm the car and ask for the problem.
+      const confirmationResponse: RepairResponse = {
+        phase: 'chat',
+        found: false,
+        message: `Veicolo confermato: ${car.marca} ${car.modello} ${car.motorizzazione}. Descrivi il problema o inserisci un codice guasto per trovare la procedura di riparazione.`,
+        cases: [],
+      }
+      setMessages(prev => [...prev,
+        {
+          id: generateId(), role: 'user',
+          rawContent: `Seleziono ${car.marca} ${car.modello} ${car.motorizzazione}`,
+          parsed: null, isStreaming: false, timestamp: new Date(),
+        },
+        {
+          id: generateId(), role: 'assistant',
+          rawContent: JSON.stringify(confirmationResponse),
+          parsed: confirmationResponse, isStreaming: false, timestamp: new Date(),
+        },
+      ])
     }
-    setMessages(prev => [...prev,
-      {
-        id: generateId(), role: 'user',
-        rawContent: `Seleziono ${car.marca} ${car.modello} ${car.motorizzazione}`,
-        parsed: null, isStreaming: false, timestamp: new Date(),
-      },
-      {
-        id: generateId(), role: 'assistant',
-        rawContent: JSON.stringify(confirmationResponse),
-        parsed: confirmationResponse, isStreaming: false, timestamp: new Date(),
-      },
-    ])
-  }, [])
+  }, [sendMessage])
 
   const selectDtcCar = useCallback((car: SearchResultCar, dtcCode: string) => {
     const confirmed: ConfirmedCar = {
@@ -392,6 +407,123 @@ export function useChat() {
     )
   }, [addDocumentMessage])
 
+  /**
+   * Searches for an alternative document for the same symptom,
+   * excluding the document the mechanic already viewed.
+   * Adds a new assistant message with either the alternative document
+   * or a "no other documents" message with related suggestions.
+   */
+  const findAlternativeDocument = useCallback(async (siglaToExclude: string) => {
+    if (isProcessingRef.current) return
+    isProcessingRef.current = true
+
+    const userMsgId = generateId()
+    const assistantMsgId = generateId()
+
+    setMessages(prev => [...prev,
+      {
+        id: userMsgId, role: 'user',
+        rawContent: 'Cerca un altro documento per questo problema',
+        parsed: null, isStreaming: false, timestamp: new Date(),
+      },
+      {
+        id: assistantMsgId, role: 'assistant',
+        rawContent: '', parsed: null, isStreaming: true, timestamp: new Date(),
+      },
+    ])
+    setIsStreaming(true)
+
+    try {
+      const symptom = originalQueryRef.current
+      const engineCode = confirmedCarRef.current?.codiceMotore
+      const result = await fetchAlternativeDocument(symptom, engineCode, siglaToExclude)
+
+      let repairResponse: RepairResponse
+      if (result.found && result.document) {
+        repairResponse = {
+          phase: 'chat',
+          found: true,
+          message: 'Ho trovato un altro caso documentato per questo problema sul tuo veicolo.',
+          cases: [result.document],
+        }
+      } else {
+        repairResponse = {
+          phase: 'chat',
+          found: false,
+          message: result.message ?? 'Non esistono altri documenti relativi a questo problema per il veicolo selezionato.',
+          cases: [],
+          relatedSuggestions: result.relatedSuggestions ?? [],
+        }
+      }
+
+      setMessages(prev => prev.map(m =>
+        m.id === assistantMsgId
+          ? { ...m, rawContent: JSON.stringify(repairResponse), parsed: repairResponse, isStreaming: false }
+          : m
+      ))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Errore sconosciuto'
+      setMessages(prev => prev.map(m =>
+        m.id === assistantMsgId
+          ? { ...m, rawContent: `Errore: ${msg}`, isStreaming: false }
+          : m
+      ))
+    } finally {
+      setIsStreaming(false)
+      isProcessingRef.current = false
+    }
+  }, [])
+
+  /**
+   * Fetches and displays a specific document by sigla.
+   * Used when the mechanic clicks a related suggestion.
+   */
+  const showSuggestedDocument = useCallback(async (sigla: string) => {
+    if (isProcessingRef.current) return
+    isProcessingRef.current = true
+
+    const userMsgId = generateId()
+    const assistantMsgId = generateId()
+
+    setMessages(prev => [...prev,
+      {
+        id: userMsgId, role: 'user',
+        rawContent: `Visualizza documento ${sigla}`,
+        parsed: null, isStreaming: false, timestamp: new Date(),
+      },
+      {
+        id: assistantMsgId, role: 'assistant',
+        rawContent: '', parsed: null, isStreaming: true, timestamp: new Date(),
+      },
+    ])
+    setIsStreaming(true)
+
+    try {
+      const doc = await fetchDocument(sigla)
+      const repairResponse: RepairResponse = {
+        phase: 'chat',
+        found: true,
+        message: 'Ecco il documento selezionato.',
+        cases: [doc],
+      }
+      setMessages(prev => prev.map(m =>
+        m.id === assistantMsgId
+          ? { ...m, rawContent: JSON.stringify(repairResponse), parsed: repairResponse, isStreaming: false }
+          : m
+      ))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Errore sconosciuto'
+      setMessages(prev => prev.map(m =>
+        m.id === assistantMsgId
+          ? { ...m, rawContent: `Errore: ${msg}`, isStreaming: false }
+          : m
+      ))
+    } finally {
+      setIsStreaming(false)
+      isProcessingRef.current = false
+    }
+  }, [])
+
   /** Resets the entire conversation. */
   const resetCar = useCallback(() => {
     setConfirmedCar(null)
@@ -402,5 +534,5 @@ export function useChat() {
     isProcessingRef.current = false
   }, [])
 
-  return { messages, confirmedCar, isStreaming, sendMessage, selectCar, selectDtcCar, selectSymptomCar, resetCar }
+  return { messages, confirmedCar, isStreaming, sendMessage, selectCar, selectDtcCar, selectSymptomCar, resetCar, findAlternativeDocument, showSuggestedDocument }
 }

@@ -38,11 +38,22 @@ public interface IDocumentSearchService
     /// Optional engine code filter. Always provide this when the car
     /// is confirmed — it dramatically improves result relevance.
     /// </param>
+    /// <param name="brand">Optional brand/model filter (e.g. "FORD Fiesta").</param>
+    /// <param name="motorizzazione">Optional motorizzazione partial match (e.g. "1.0 EcoBoost 12v").</param>
+    /// <param name="fuel">Optional fuel type filter (e.g. "Diesel", "Benzina").</param>
+    /// <param name="kw">Optional exact kW filter.</param>
+    /// <param name="yearFrom">Optional minimum production year.</param>
+    /// <param name="yearTo">Optional maximum production year.</param>
     /// <param name="topK">Number of documents to return. Default: 3.</param>
     Task<IReadOnlyList<RepairDocumentResult>> SearchBySymptomAsync(
         string symptom,
         string? codiceMotore = null,
         string? brand = null,
+        string? motorizzazione = null,
+        string? fuel = null,
+        int? kw = null,
+        int? yearFrom = null,
+        int? yearTo = null,
         int topK = 3,
         CancellationToken ct = default);
 
@@ -73,5 +84,20 @@ public interface IDocumentSearchService
     /// </summary>
     Task<RepairDocumentResult?> GetByCarIdAsync(
         string idMacchina,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Finds an alternative repair document for the same symptom,
+    /// excluding the already-shown document (excludeSigla).
+    ///
+    /// Strategy:
+    ///   1. Semantic search with engineCode filter, excluding excludeSigla → return if found.
+    ///   2. If nothing found for this engine: broader semantic search (no engine filter),
+    ///      still excluding excludeSigla → return up to 3 titles as suggestions.
+    /// </summary>
+    Task<AlternativeDocumentResult> FindAlternativeAsync(
+        string symptom,
+        string? engineCode,
+        string excludeSigla,
         CancellationToken ct = default);
 }

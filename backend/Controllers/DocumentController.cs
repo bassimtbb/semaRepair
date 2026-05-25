@@ -55,6 +55,41 @@ public sealed class DocumentController : ControllerBase
         return Ok(BuildResponse(doc));
     }
 
+    /// <summary>
+    /// Returns an alternative repair document for the same symptom,
+    /// excluding the document the mechanic already viewed.
+    /// When no alternative exists for the confirmed engine, returns related
+    /// document title suggestions from a broader semantic search.
+    /// </summary>
+    [HttpGet("alternative")]
+    public async Task<IActionResult> GetAlternativeAsync(
+        [FromQuery] string symptom,
+        [FromQuery] string? engineCode,
+        [FromQuery] string excludeSigla,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(symptom) || string.IsNullOrWhiteSpace(excludeSigla))
+            return BadRequest(new { error = "symptom and excludeSigla are required." });
+
+        _logger.LogInformation(
+            "Alternative doc: symptom={Symptom}, engine={Engine}, exclude={Exclude}",
+            symptom, engineCode, excludeSigla);
+
+        var result = await _docs.FindAlternativeAsync(symptom, engineCode, excludeSigla, ct);
+
+        if (result.Found && result.Document is not null)
+            return Ok(new { found = true, document = BuildResponse(result.Document) });
+
+        return Ok(new
+        {
+            found = false,
+            message = "Non esistono altri documenti relativi a questo problema per il veicolo selezionato.",
+            relatedSuggestions = result.Suggestions
+                .Select(s => new { sigla = s.Sigla, titolo = s.Titolo })
+                .ToList()
+        });
+    }
+
     private static object BuildResponse(RepairDocumentResult doc)
     {
         var extracted = DocumentExtractor.Extract(doc);
@@ -65,6 +100,7 @@ public sealed class DocumentController : ControllerBase
             stelle      = doc.GradoAttendibilita,
             impianto    = extracted.Impianto,
             dispositivo = extracted.Dispositivo,
+            anomalia    = extracted.Anomalia,
             causa       = extracted.Causa,
             dtc         = extracted.Dtc,
             intervento  = extracted.Intervento,

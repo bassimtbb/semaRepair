@@ -1,6 +1,6 @@
 export function TypingIndicator() {
   return (
-    <div style={{ display: 'flex', gap: 4, padding: '4px 0', alignItems: 'center' }}>
+    <div data-testid="typing-indicator" style={{ display: 'flex', gap: 4, padding: '4px 0', alignItems: 'center' }}>
       {[0, 1, 2].map(i => (
         <span
           key={i}

@@ -17,6 +17,8 @@ interface Props {
   onSelectCar: (car: SearchResultCar) => void
   onSelectDtcCar: (car: SearchResultCar, dtcCode: string) => void
   onSymptomCarSelect: (car: SearchResultCar) => void
+  onFindAnother: (sigla: string) => void
+  onShowSuggestion: (sigla: string) => void
 }
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
@@ -64,12 +66,15 @@ function UserBubble({ content }: { content: string }) {
 
 function AssistantBubble({ children, inline }: { children: ReactNode; inline?: boolean }) {
   return (
-    <div style={{
-      ...BUBBLE_BASE,
-      padding: inline ? '10px 14px' : '12px 14px',
-      color: '#1e293b',
-      display: inline ? 'inline-block' : undefined,
-    }}>
+    <div
+      data-testid="assistant-bubble"
+      style={{
+        ...BUBBLE_BASE,
+        padding: inline ? '10px 14px' : '12px 14px',
+        color: '#1e293b',
+        display: inline ? 'inline-block' : undefined,
+      }}
+    >
       {children}
     </div>
   )
@@ -178,20 +183,60 @@ function SymptomPhase({
   )
 }
 
-function ChatPhase({ p }: { p: RepairResponse }) {
+function ChatPhase({
+  p,
+  onFindAnother,
+  onShowSuggestion,
+}: {
+  p: RepairResponse
+  onFindAnother: (sigla: string) => void
+  onShowSuggestion: (sigla: string) => void
+}) {
   if (!p.found) {
     return (
-      <div style={{
-        background: '#fffbeb',
-        border: '1px solid #fcd34d',
-        borderLeft: '4px solid #f59e0b',
-        borderRadius: 8,
-        padding: '14px 16px',
-        fontSize: 14,
-        color: '#92400e',
-        lineHeight: 1.6,
-      }}>
-        {p.message}
+      <div>
+        <div style={{
+          background: '#fffbeb',
+          border: '1px solid #fcd34d',
+          borderLeft: '4px solid #f59e0b',
+          borderRadius: 8,
+          padding: '14px 16px',
+          fontSize: 14,
+          color: '#92400e',
+          lineHeight: 1.6,
+        }}>
+          {p.message}
+        </div>
+        {p.relatedSuggestions && p.relatedSuggestions.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', marginBottom: 8 }}>
+              Problemi simili documentati per altri veicoli:
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {p.relatedSuggestions.map(s => (
+                <button
+                  key={s.sigla}
+                  data-testid="suggestion-btn"
+                  data-sigla={s.sigla}
+                  onClick={() => onShowSuggestion(s.sigla)}
+                  style={{
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: 6,
+                    padding: '8px 12px',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    color: '#1a3a6b',
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {s.titolo}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -199,7 +244,11 @@ function ChatPhase({ p }: { p: RepairResponse }) {
   return (
     <div style={{ marginTop: p.message ? 12 : 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       {p.cases.map((caso, i) => (
-        <RepairCaseCard key={i} repairCase={caso} />
+        <RepairCaseCard
+          key={i}
+          repairCase={caso}
+          onFindAnother={() => onFindAnother(caso.sigla)}
+        />
       ))}
     </div>
   )
@@ -207,7 +256,7 @@ function ChatPhase({ p }: { p: RepairResponse }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomCarSelect }: Props) {
+export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomCarSelect, onFindAnother, onShowSuggestion }: Props) {
   const p = message.parsed
 
   if (message.role === 'user') return <UserBubble content={message.rawContent} />
@@ -233,7 +282,7 @@ export function MessageBubble({ message, onSelectCar, onSelectDtcCar, onSymptomC
             {p.phase === 'dtc_cars'       && <DtcPhase p={p} onSelectDtcCar={onSelectDtcCar} />}
             {p.phase === 'ask_car'        && <AskCarPhase p={p} />}
             {p.phase === 'symptom_cars'   && <SymptomPhase p={p} onSymptomCarSelect={onSymptomCarSelect} />}
-            {p.phase === 'chat'           && <ChatPhase p={p} />}
+            {p.phase === 'chat'           && <ChatPhase p={p} onFindAnother={onFindAnother} onShowSuggestion={onShowSuggestion} />}
           </AssistantBubble>
         )}
 

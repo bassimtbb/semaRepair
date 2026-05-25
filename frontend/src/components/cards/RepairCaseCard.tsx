@@ -3,6 +3,7 @@ import type { RepairCase } from '../../types/api.types'
 
 interface Props {
   repairCase: RepairCase
+  onFindAnother?: () => void
 }
 
 const HEADER_STYLE: CSSProperties = {
@@ -69,18 +70,21 @@ function gradeLabel(stelle: number): string {
   return 'Grado di attendibilità (*)'
 }
 
-export function RepairCaseCard({ repairCase: rc }: Props) {
+export function RepairCaseCard({ repairCase: rc, onFindAnother }: Props) {
   return (
-    <div style={{
-      background: '#fff',
-      border: '1px solid #ccc',
-      borderRadius: 4,
-      marginBottom: 16,
-      color: '#1a1a1a',
-      fontFamily: 'Arial, sans-serif',
-      overflow: 'hidden',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-    }}>
+    <div
+      data-testid="repair-card"
+      data-sigla={rc.sigla}
+      style={{
+        background: '#fff',
+        border: '1px solid #ccc',
+        borderRadius: 4,
+        marginBottom: 16,
+        color: '#1a1a1a',
+        fontFamily: 'Arial, sans-serif',
+        overflow: 'hidden',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+      }}>
 
       {/* Header */}
       <div style={HEADER_STYLE}>
@@ -142,7 +146,7 @@ export function RepairCaseCard({ repairCase: rc }: Props) {
           <ul style={UL_STYLE}>
             <li style={LI_STYLE}><strong>Impianto:</strong> {rc.impianto}</li>
             <li style={LI_STYLE}><strong>Dispositivo:</strong> {rc.dispositivo}</li>
-            <li style={LI_STYLE}><strong>Anomalia:</strong> {rc.titolo?.split('|')[0].trim()}</li>
+            <li style={LI_STYLE}><strong>Anomalia:</strong> {rc.anomalia}</li>
             <li style={LI_STYLE}>
               <strong>Errori rilevati dall'autodiagnosi:</strong>{' '}
               <DtcInline codes={rc.dtc} />
@@ -178,13 +182,34 @@ export function RepairCaseCard({ repairCase: rc }: Props) {
       <div style={{
         background: '#f8f8f8',
         borderTop: '1px solid #e0e0e0',
-        textAlign: 'center',
         padding: '10px 16px',
-        fontSize: 13,
-        color: '#555',
-        fontWeight: 500,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        flexWrap: 'wrap',
       }}>
-        Questa guida ti è stata utile?
+        <span style={{ fontSize: 13, color: '#555', fontWeight: 500 }}>
+          Questa guida ti è stata utile?
+        </span>
+        {onFindAnother && (
+          <button
+            data-testid="find-another-btn"
+            onClick={onFindAnother}
+            style={{
+              background: 'none',
+              border: '1px solid #1a3a6b',
+              color: '#1a3a6b',
+              borderRadius: 4,
+              padding: '4px 10px',
+              fontSize: 12,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Cerca un altro documento
+          </button>
+        )}
       </div>
 
     </div>

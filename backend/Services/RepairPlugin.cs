@@ -170,7 +170,7 @@ public sealed class RepairPlugin
                 .Select(d => d with
                 {
                     Cars = d.Cars
-                        .Where(c => MatchesBrandFilter(c, brand))
+                        .Where(c => MatchesCarFilter(c, brand: brand))
                         .ToList()
                 })
                 .Where(d => d.Cars.Any())
@@ -191,13 +191,25 @@ public sealed class RepairPlugin
         string symptom,
         string? engineCode = null,
         string? brand = null,
+        string? motorizzazione = null,
+        string? fuel = null,
+        int? kw = null,
+        int? yearFrom = null,
+        int? yearTo = null,
         CancellationToken ct = default)
     {
         _logger.LogInformation(
-            "SearchBySymptom: symptom={Symptom} engine={Engine} brand={Brand}",
-            symptom, engineCode, brand);
+            "SearchBySymptom: symptom={Symptom} engine={Engine} brand={Brand} " +
+            "motoriz={Motoriz} fuel={Fuel} kw={Kw}",
+            symptom, engineCode, brand, motorizzazione, fuel, kw);
 
-        var docs = await _docSearch.SearchBySymptomAsync(symptom, engineCode, brand, topK: 1, ct: ct);
+        var hasSpecFilter = brand is not null || motorizzazione is not null ||
+                            fuel is not null || kw.HasValue ||
+                            yearFrom.HasValue || yearTo.HasValue;
+
+        var docs = await _docSearch.SearchBySymptomAsync(
+            symptom, engineCode, brand, motorizzazione, fuel, kw, yearFrom, yearTo,
+            topK: 1, ct: ct);
 
         if (!docs.Any())
         {
@@ -212,9 +224,8 @@ public sealed class RepairPlugin
         }
 
         // No confirmed car — return a flat car list so the mechanic can select theirs.
-        // Also use car-list path when brand is provided (B1b refinement): the mechanic
-        // must still click to confirm their specific variant even with a brand filter.
-        if (engineCode is null || brand is not null)
+        // Also use car-list path when spec filters are provided (B1b refinement).
+        if (engineCode is null || hasSpecFilter)
         {
             var sb = new StringBuilder();
             sb.AppendLine("SELEZIONA_VEICOLO: Ho trovato casi documentati per questo problema.");
@@ -223,9 +234,9 @@ public sealed class RepairPlugin
 
             foreach (var doc in docs.Take(1))
             {
-                // When brand filter is active, only show cars matching that brand/model
-                var filteredCars = brand is not null
-                    ? doc.Cars.Where(c => MatchesBrandFilter(c, brand))
+                // When filters are active, only show cars that match ALL provided specs
+                var filteredCars = hasSpecFilter
+                    ? doc.Cars.Where(c => MatchesCarFilter(c, brand, motorizzazione, fuel, kw, yearFrom, yearTo))
                     : doc.Cars;
 
                 var uniqueCars = filteredCars
@@ -256,13 +267,47 @@ public sealed class RepairPlugin
     }
 
     /// <summary>
-    /// Returns true when a car's brand or model matches every token in the
-    /// brand filter string (e.g. "FIAT Ducato" → "FIAT" ∩ "Ducato").
+    /// Returns true when a car matches ALL of the provided filters.
+    /// Each filter is optional — null means "no constraint".
+    /// The brand filter uses token-based partial matching across Marca and Modello.
     /// </summary>
-    private static bool MatchesBrandFilter(CarInfo car, string brand) =>
-        brand.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-             .All(t => car.Marca.Contains(t,   StringComparison.OrdinalIgnoreCase) ||
-                       car.Modello.Contains(t, StringComparison.OrdinalIgnoreCase));
+    private static bool MatchesCarFilter(
+        CarInfo car,
+        string? brand = null,
+        string? motorizzazione = null,
+        string? fuel = null,
+        int? kw = null,
+        int? yearFrom = null,
+        int? yearTo = null)
+    {
+        if (brand is not null)
+        {
+            var brandMatch = brand
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .All(t => car.Marca.Contains(t,       StringComparison.OrdinalIgnoreCase) ||
+                          car.Modello.Contains(t,     StringComparison.OrdinalIgnoreCase));
+            if (!brandMatch) return false;
+        }
+
+        if (motorizzazione is not null &&
+            !car.Motorizzazione.Contains(motorizzazione, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (fuel is not null &&
+            !car.Alimentazione.Contains(fuel, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (kw.HasValue && car.Kw != kw.Value)
+            return false;
+
+        if (yearFrom.HasValue && car.AnnoFine.HasValue && car.AnnoFine < yearFrom.Value)
+            return false;
+
+        if (yearTo.HasValue && car.AnnoInizio.HasValue && car.AnnoInizio > yearTo.Value)
+            return false;
+
+        return true;
+    }
 
     private static string FormatDocuments(
         IReadOnlyList<RepairDocumentResult> docs,

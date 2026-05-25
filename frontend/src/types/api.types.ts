@@ -28,6 +28,7 @@ export interface RepairCase {
   stelle: number
   impianto: string
   dispositivo: string
+  anomalia: string
   causa: string
   dtc: string[]
   /** Intervento subfield from the Procedura chapter (CONTENUTO_DOCUMENTO) */
@@ -57,12 +58,28 @@ export interface DtcCarsResponse {
   selectedCar: CarOption | null
 }
 
+/** A document title returned as a suggestion when no alternative exists for the confirmed car */
+export interface DocumentSuggestion {
+  sigla: string
+  titolo: string
+}
+
 /** Response when showing repair cases */
 export interface RepairResponse {
   phase: 'chat'
   found: boolean
   message: string
   cases: RepairCase[]
+  /** Populated when found=false and there are related documents from a broader search */
+  relatedSuggestions?: DocumentSuggestion[]
+}
+
+/** Response from GET /api/documents/alternative */
+export interface AlternativeDocumentResponse {
+  found: boolean
+  document?: RepairCase
+  message?: string
+  relatedSuggestions?: DocumentSuggestion[]
 }
 
 /** Response when symptom or vehicle-only search finds matching cars */

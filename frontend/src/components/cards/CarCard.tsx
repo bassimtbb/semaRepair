@@ -11,6 +11,7 @@ interface Props {
 export function CarCard({ car, index, titoloDocumento, onSelect }: Props) {
   return (
     <div
+      data-testid="car-card"
       onClick={onSelect}
       style={{
         background: '#fff',
@@ -72,6 +73,7 @@ export function CarCard({ car, index, titoloDocumento, onSelect }: Props) {
         </div>
       </div>
       <button
+        data-testid="car-select-btn"
         onClick={e => { e.stopPropagation(); onSelect() }}
         style={{
           background: '#1a3a6b',

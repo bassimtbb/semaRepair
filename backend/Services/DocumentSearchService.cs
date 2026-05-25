@@ -83,12 +83,18 @@ public sealed class DocumentSearchService : IDocumentSearchService
         string symptom,
         string? codiceMotore = null,
         string? brand = null,
+        string? motorizzazione = null,
+        string? fuel = null,
+        int? kw = null,
+        int? yearFrom = null,
+        int? yearTo = null,
         int topK = 3,
         CancellationToken ct = default)
     {
         _logger.LogDebug(
-            "Semantic search: symptom={Symptom}, engine={Engine}, brand={Brand}",
-            symptom, codiceMotore, brand);
+            "Semantic search: symptom={Symptom}, engine={Engine}, brand={Brand}, " +
+            "motoriz={Motoriz}, fuel={Fuel}, kw={Kw}, year={YF}-{YT}",
+            symptom, codiceMotore, brand, motorizzazione, fuel, kw, yearFrom, yearTo);
 
         // Embed the symptom description
         var floats = await _embedding.EmbedAsync(symptom, ct);
@@ -105,7 +111,6 @@ public sealed class DocumentSearchService : IDocumentSearchService
         }
 
         // Brand/model filter — each token must match MarcaMacchina or ModelloMacchina.
-        // Splitting handles compound inputs like "FIAT Ducato" → "FIAT" ∩ "Ducato".
         if (brand is not null)
         {
             foreach (var token in brand.Split(' ', StringSplitOptions.RemoveEmptyEntries))
@@ -116,6 +121,41 @@ public sealed class DocumentSearchService : IDocumentSearchService
                         EF.Functions.ILike(c.MarcaMacchina,   $"%{t}%") ||
                         EF.Functions.ILike(c.ModelloMacchina, $"%{t}%")));
             }
+        }
+
+        // Additional spec filters — applied only when provided.
+        if (motorizzazione is not null)
+        {
+            var m = motorizzazione;
+            query = query.Where(rd =>
+                rd.Cars.Any(c => EF.Functions.ILike(c.MotorizzazioneMacchina ?? "", $"%{m}%")));
+        }
+
+        if (fuel is not null)
+        {
+            var f = fuel;
+            query = query.Where(rd =>
+                rd.Cars.Any(c => EF.Functions.ILike(c.AlimentazioneMacchina ?? "", $"%{f}%")));
+        }
+
+        if (kw.HasValue)
+        {
+            var k = kw.Value;
+            query = query.Where(rd => rd.Cars.Any(c => c.KwMacchina == k));
+        }
+
+        if (yearFrom.HasValue)
+        {
+            var yf = yearFrom.Value;
+            query = query.Where(rd =>
+                rd.Cars.Any(c => c.AnnoFineMacchina == null || c.AnnoFineMacchina >= yf));
+        }
+
+        if (yearTo.HasValue)
+        {
+            var yt = yearTo.Value;
+            query = query.Where(rd =>
+                rd.Cars.Any(c => c.AnnoInizioMacchina == null || c.AnnoInizioMacchina <= yt));
         }
 
         var documents = await query
@@ -253,6 +293,54 @@ public sealed class DocumentSearchService : IDocumentSearchService
             .FirstOrDefaultAsync(ct);
 
         return doc is null ? null : ToResult(doc);
+    }
+
+    /// <inheritdoc/>
+    public async Task<AlternativeDocumentResult> FindAlternativeAsync(
+        string symptom,
+        string? engineCode,
+        string excludeSigla,
+        CancellationToken ct = default)
+    {
+        _logger.LogDebug(
+            "FindAlternative: symptom={Symptom}, engine={Engine}, exclude={Exclude}",
+            symptom, engineCode, excludeSigla);
+
+        var floats = await _embedding.EmbedAsync(symptom, ct);
+        var queryVector = new Pgvector.Vector(floats);
+
+        // Primary: same engine, excluding the already-shown document
+        var primaryQuery = _db.RepairDocuments
+            .Where(rd => rd.Embedding != null)
+            .Where(rd => rd.SiglaDocumento != excludeSigla);
+
+        if (engineCode is not null)
+        {
+            primaryQuery = primaryQuery.Where(rd =>
+                rd.Cars.Any(c => c.CodiceMotoreMacchina == engineCode));
+        }
+
+        var primary = await primaryQuery
+            .OrderBy(rd => rd.Embedding!.CosineDistance(queryVector))
+            .Take(1)
+            .Include(rd => rd.Cars)
+            .FirstOrDefaultAsync(ct);
+
+        if (primary is not null)
+            return new AlternativeDocumentResult(true, ToResult(primary), []);
+
+        // No alternative for this engine — broader search for related suggestions
+        var suggestions = await _db.RepairDocuments
+            .Where(rd => rd.Embedding != null)
+            .Where(rd => rd.SiglaDocumento != excludeSigla)
+            .OrderBy(rd => rd.Embedding!.CosineDistance(queryVector))
+            .Take(3)
+            .Select(rd => new DocumentSuggestion(
+                rd.SiglaDocumento,
+                rd.TitoloDocumento ?? string.Empty))
+            .ToListAsync(ct);
+
+        return new AlternativeDocumentResult(false, null, suggestions);
     }
 
     /// <summary>

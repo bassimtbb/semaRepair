@@ -46,3 +46,20 @@ public sealed record RepairDocumentResult(
     string Procedura,
     IReadOnlyList<CarInfo> Cars
 );
+
+/// <summary>
+/// A lightweight document title suggestion, returned when no alternative
+/// document exists for the confirmed car and a broader search is used instead.
+/// </summary>
+public sealed record DocumentSuggestion(string Sigla, string Titolo);
+
+/// <summary>
+/// Result of the "find alternative document" search.
+/// When Found is true, Document is the next most relevant document.
+/// When Found is false, Suggestions lists related documents from a broader search.
+/// </summary>
+public sealed record AlternativeDocumentResult(
+    bool Found,
+    RepairDocumentResult? Document,
+    IReadOnlyList<DocumentSuggestion> Suggestions
+);

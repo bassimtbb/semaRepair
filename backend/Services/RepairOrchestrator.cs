@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -19,12 +18,14 @@ namespace SemaRepair.Api.Services;
 /// easy to parse as plain JSON. Final answer uses :streamGenerateContent
 /// so the frontend receives progressive chunks.
 /// </summary>
-public sealed class RepairOrchestrator
+public sealed class RepairOrchestrator(
+    RepairPlugin plugin,
+    HttpClient httpClient,
+    IConfiguration configuration,
+    ILogger<RepairOrchestrator> logger)
 {
-    private readonly RepairPlugin _plugin;
-    private readonly HttpClient _httpClient;
-    private readonly string _apiKey;
-    private readonly ILogger<RepairOrchestrator> _logger;
+    private readonly string _apiKey = configuration["GEMINI_API_KEY"]
+        ?? throw new InvalidOperationException("GEMINI_API_KEY not configured.");
 
     private const string GenerateUrl =
         "https://generativelanguage.googleapis.com/v1beta/models/" +
@@ -77,16 +78,52 @@ public sealed class RepairOrchestrator
               → SearchByFaultCode(faultCode="P1320", brand="CITROEN")
 
           CASO B1b — Se nella cronologia è presente una fase "symptom_cars"
-          (cioè una ricerca per sintomo precedente):
-            → Chiama SearchBySymptom con il sintomo ORIGINALE dalla cronologia
-              E il brand/model estratti dal messaggio corrente
-            → NON passare engineCode — solo brand (marca o modello, non "2.0 JTD 8v")
+          (cioè una ricerca per sintomo precedente).
+          Analizza il messaggio corrente e scegli:
+
+          B1b-MARCA: il messaggio contiene una marca o un modello identificabile
+          (FIAT, Ducato, Citroen, Jumper, Ford, Fiesta, Peugeot, Boxer, Iveco,
+          Corsa, Golf, Punto, Clio, Polo, Yaris, Focus, Transit, Kangoo...):
+            → Chiama SearchBySymptom con:
+              - symptom = sintomo ORIGINALE dalla cronologia
+              - brand = marca o modello estratti (SOLO nome marca/modello, MAI
+                        motorizzazione come "1.0 EcoBoost", "2.3 JTD")
+              - Se il messaggio contiene anche dati tecnici, estraili e passali:
+                · motorizzazione = es. "1.0 EcoBoost 12v", "2.3 JTD 16v", "HDi 115"
+                · kw = es. 63 (da "63 kW" o "63kW")
+                · fuel = es. "Diesel", "Benzina" (da "diesel", "benzina")
+                · yearFrom, yearTo = anni di produzione
             → Risultato: usa SEMPRE SCHEMA C (symptom_cars), anche con 1 solo veicolo
             → MAI usare SCHEMA D per questo caso
-            → Es: cronologia ha symptom="arresto del motore", utente scrive "FIAT Ducato"
-              → SearchBySymptom(symptom="arresto del motore", brand="FIAT Ducato")
-            → Es: cronologia ha symptom="spia motore accesa", utente scrive "Jumper diesel"
-              → SearchBySymptom(symptom="spia motore accesa", brand="Jumper")
+            → MAI usare il messaggio corrente come "symptom" — il sintomo è SOLO
+              quello già presente nella cronologia (dalla fase symptom_cars)
+            → Es: utente scrive "FIAT Ducato"
+              → SearchBySymptom(symptom=orig, brand="FIAT Ducato")
+            → Es: utente scrive "Jumper diesel"
+              → SearchBySymptom(symptom=orig, brand="Jumper", fuel="Diesel")
+            → Es: utente scrive "Fiesta 1.0 EcoBoost 12v"
+              → SearchBySymptom(symptom=orig, brand="Fiesta",
+                                 motorizzazione="1.0 EcoBoost 12v")
+            → Es: utente scrive "FORD Fiesta 1.0 EcoBoost 12v 63 kW / 85 CV"
+              → SearchBySymptom(symptom=orig, brand="FORD Fiesta",
+                                 motorizzazione="1.0 EcoBoost 12v", kw=63)
+            → Es: utente scrive "Ford Fiesta 1.5 TDCi 2017 diesel 63 kW"
+              → SearchBySymptom(symptom=orig, brand="Ford Fiesta",
+                                 motorizzazione="1.5 TDCi", fuel="Diesel",
+                                 kw=63, yearFrom=2017)
+            → ATTENZIONE: "Fiesta", "Ducato", "Punto", "Golf" ecc. sono MODELLI —
+              anche senza il marchio esplicito, usa B1b-MARCA, NON B1b-SPECS
+
+          B1b-SPECS: il messaggio contiene SOLO dati tecnici senza alcuna marca o
+          modello identificabile (alimentazione, anni, kW, CV, codice motore):
+            Es: "Diesel 2011-2014 107 kW", "benzina 85kW/115CV", "motore F1CE3481M"
+            → Chiama FindCar con i parametri tecnici estratti
+              (fuel, yearFrom, yearTo, kw, engineCode — NON brand, NON model)
+            → Risultato: SCHEMA A (lista veicoli — il meccanico deve selezionare)
+            → Il termine "Diesel", "Benzina", "Gas" è un'ALIMENTAZIONE, MAI una marca
+            → Usa B1b-SPECS SOLO se non c'è NESSUN nome di marca o modello riconoscibile
+            → Es: utente scrive "Diesel 2011 - 2014 107 kW / 145 CV"
+              → FindCar(fuel="Diesel", yearFrom=2011, yearTo=2014, kw=107)
 
           CASO B2 — Se nella cronologia NON c'è nessun "dtcCode" né "symptom_cars":
             → Chiama FindCar con i parametri estratti
@@ -99,6 +136,9 @@ public sealed class RepairOrchestrator
         domande non tecniche):
           → Non chiamare nessuno strumento
           → Rispondi direttamente con JSON
+          → ATTENZIONE: se nella cronologia c'è una fase "symptom_cars" o "dtc_cars",
+            NON usare OPZIONE C per messaggi che contengono nomi di veicoli —
+            usa invece B1b-MARCA o B1b-SPECS a seconda del contenuto
 
         ════════════════════════════════════════
         STRUMENTI
@@ -123,8 +163,15 @@ public sealed class RepairOrchestrator
              symptom="mancato avviamento del motore")
            "ventola sempre al massimo" con engineCode noto → SearchBySymptom(
              symptom="ventola sempre al massimo", engineCode="F1AE0481C")
-           Affinamento marca (CASO B1b): cronologia ha symptom_cars, utente scrive "FIAT Ducato"
+           Affinamento B1b — solo marca: utente scrive "FIAT Ducato"
              → SearchBySymptom(symptom=sintomo_dalla_cronologia, brand="FIAT Ducato")
+           Affinamento B1b — marca + motorizzazione: utente scrive "Fiesta 1.0 EcoBoost 12v"
+             → SearchBySymptom(symptom=sintomo_dalla_cronologia,
+                               brand="Fiesta", motorizzazione="1.0 EcoBoost 12v")
+           Affinamento B1b — tutti i parametri: utente scrive "FORD Fiesta 1.0 EcoBoost 12v 63 kW"
+             → SearchBySymptom(symptom=sintomo_dalla_cronologia,
+                               brand="FORD Fiesta", motorizzazione="1.0 EcoBoost 12v", kw=63)
+           REGOLA: symptom = SEMPRE il testo dalla cronologia, MAI il messaggio corrente
 
         ════════════════════════════════════════
         SCHEMI DI RISPOSTA
@@ -305,19 +352,6 @@ public sealed class RepairOrchestrator
         6. Lingua: sempre italiano professionale. Tono: tecnico, per meccanici.
         """;
 
-    public RepairOrchestrator(
-        RepairPlugin plugin,
-        HttpClient httpClient,
-        IConfiguration configuration,
-        ILogger<RepairOrchestrator> logger)
-    {
-        _plugin     = plugin;
-        _httpClient = httpClient;
-        _apiKey     = configuration["GEMINI_API_KEY"]
-            ?? throw new InvalidOperationException("GEMINI_API_KEY not configured.");
-        _logger     = logger;
-    }
-
     /// <summary>
     /// Public entry point. Wraps StreamInternalAsync with a top-level error
     /// guard so any unhandled exception becomes a graceful JSON error response
@@ -351,7 +385,7 @@ public sealed class RepairOrchestrator
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(
+                    logger.LogError(
                         "RepairOrchestrator error: {Error}", ex.Message);
                     errorMessage = JsonSerializer.Serialize(new
                     {
@@ -417,22 +451,22 @@ public sealed class RepairOrchestrator
             }
         };
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Sending first Gemini request for: {Message}", userMessage);
 
         // First request: non-streaming so we can inspect the response for tool calls
-        var response     = await _httpClient.PostAsJsonAsync(generateUrl, requestBody, ct);
+        var response     = await httpClient.PostAsJsonAsync(generateUrl, requestBody, ct);
         var responseText = await response.Content.ReadAsStringAsync(ct);
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "First Gemini response status: {Status}", response.StatusCode);
-        _logger.LogInformation(
+        logger.LogInformation(
             "First Gemini response body (first 500 chars): {Body}",
             responseText[..Math.Min(500, responseText.Length)]);
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogError(
+            logger.LogError(
                 "Gemini first call failed: {Status} {Body}",
                 response.StatusCode,
                 responseText[..Math.Min(500, responseText.Length)]);
@@ -447,7 +481,7 @@ public sealed class RepairOrchestrator
         }
 
         var toolCall = ExtractToolCall(responseText);
-        _logger.LogInformation(
+        logger.LogInformation(
             "Tool call detected: {ToolCall}", toolCall?.Name ?? "NONE");
 
         if (toolCall is null)
@@ -459,14 +493,14 @@ public sealed class RepairOrchestrator
             yield break;
         }
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Gemini called tool: {Tool} with args: {Args}",
             toolCall.Name, toolCall.Args);
 
         var toolResult = await ExecuteToolAsync(
             toolCall.Name, toolCall.Args, confirmedEngineCode, ct);
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Tool result for {Tool}: {Result}",
             toolCall.Name, toolResult[..Math.Min(200, toolResult.Length)]);
 
@@ -494,7 +528,7 @@ public sealed class RepairOrchestrator
             Content = JsonContent.Create(requestBody2)
         };
 
-        var finalResponse = await _httpClient.SendAsync(
+        var finalResponse = await httpClient.SendAsync(
             finalRequest,
             HttpCompletionOption.ResponseHeadersRead,
             ct);
@@ -710,9 +744,40 @@ public sealed class RepairOrchestrator
                             brand = new
                             {
                                 type        = "string",
-                                description = "Marca/modello veicolo per filtrare i risultati " +
-                                             "(opzionale, usa quando il meccanico specifica marca/modello " +
-                                             "dopo una ricerca per sintomo per affinare i risultati)"
+                                description = "Marca/modello veicolo (es. 'FORD Fiesta', 'FIAT Ducato'). " +
+                                             "Usa quando il meccanico specifica marca o modello. " +
+                                             "NON includere motorizzazione o dati tecnici in questo campo."
+                            },
+                            motorizzazione = new
+                            {
+                                type        = "string",
+                                description = "Motorizzazione specifica per filtrare i risultati " +
+                                             "(es. '1.0 EcoBoost 12v', '2.3 JTD 16v', 'HDi 115'). " +
+                                             "Usa quando il meccanico specifica la motorizzazione."
+                            },
+                            fuel = new
+                            {
+                                type        = "string",
+                                description = "Alimentazione per filtrare i risultati " +
+                                             "(Diesel, Benzina, Gas). " +
+                                             "Usa quando il meccanico specifica il tipo di carburante."
+                            },
+                            kw = new
+                            {
+                                type        = "integer",
+                                description = "Potenza in kW per filtrare i risultati " +
+                                             "(es. 63 da '63 kW / 85 CV'). " +
+                                             "Usa quando il meccanico specifica i kW."
+                            },
+                            yearFrom = new
+                            {
+                                type        = "integer",
+                                description = "Anno inizio produzione per filtrare i risultati."
+                            },
+                            yearTo = new
+                            {
+                                type        = "integer",
+                                description = "Anno fine produzione per filtrare i risultati."
                             }
                         },
                         required = new[] { "symptom" }
@@ -836,7 +901,7 @@ public sealed class RepairOrchestrator
 
             return toolName switch
             {
-                "FindCar" => await _plugin.FindCarAsync(
+                "FindCar" => await plugin.FindCarAsync(
                     brand:      GetString(args, "brand"),
                     model:      GetString(args, "model"),
                     yearFrom:   GetInt(args, "yearFrom"),
@@ -846,24 +911,29 @@ public sealed class RepairOrchestrator
                     kw:         GetInt(args, "kw"),
                     ct:         ct),
 
-                "SearchByFaultCode" => await _plugin.SearchByFaultCodeAsync(
+                "SearchByFaultCode" => await plugin.SearchByFaultCodeAsync(
                     faultCode:  GetString(args, "faultCode")!,
                     engineCode: GetString(args, "engineCode") ?? confirmedEngineCode,
                     brand:      GetString(args, "brand"),
                     ct:         ct),
 
-                "SearchBySymptom" => await _plugin.SearchBySymptomAsync(
-                    symptom:    GetString(args, "symptom")!,
-                    engineCode: GetString(args, "engineCode") ?? confirmedEngineCode,
-                    brand:      GetString(args, "brand"),
-                    ct:         ct),
+                "SearchBySymptom" => await plugin.SearchBySymptomAsync(
+                    symptom:        GetString(args, "symptom")!,
+                    engineCode:     GetString(args, "engineCode") ?? confirmedEngineCode,
+                    brand:          GetString(args, "brand"),
+                    motorizzazione: GetString(args, "motorizzazione"),
+                    fuel:           GetString(args, "fuel"),
+                    kw:             GetInt(args, "kw"),
+                    yearFrom:       GetInt(args, "yearFrom"),
+                    yearTo:         GetInt(args, "yearTo"),
+                    ct:             ct),
 
                 _ => $"Strumento sconosciuto: {toolName}"
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError("Tool execution error: {Error}", ex.Message);
+            logger.LogError("Tool execution error: {Error}", ex.Message);
             return $"Errore durante l'esecuzione dello strumento: {ex.Message}";
         }
     }

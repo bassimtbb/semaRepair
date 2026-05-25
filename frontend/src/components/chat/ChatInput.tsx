@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react'
-import { Mic, MicOff, Loader } from 'lucide-react'
+import { Mic, MicOff, Loader, Camera } from 'lucide-react'
 import { useAudioRecorder } from '../../hooks/useAudioRecorder'
+import { CameraScanner } from '../scanner/CameraScanner'
 
 interface Props {
   onSend: (text: string) => void
@@ -9,6 +10,7 @@ interface Props {
 
 export function ChatInput({ onSend, disabled }: Props) {
   const [text, setText] = useState('')
+  const [showCamera, setShowCamera] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const recorder = useAudioRecorder((transcript) => {
@@ -66,6 +68,11 @@ export function ChatInput({ onSend, disabled }: Props) {
   const canSend = !disabled && !!text.trim()
 
   return (
+    <>
+      {showCamera && (
+        <CameraScanner onClose={() => setShowCamera(false)} />
+      )}
+
     <div style={{
       padding: '8px 12px 12px',
       borderTop: '1px solid #e2e8f0',
@@ -95,6 +102,7 @@ export function ChatInput({ onSend, disabled }: Props) {
       }}>
         <textarea
           ref={textareaRef}
+          data-testid="chat-input"
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -116,6 +124,26 @@ export function ChatInput({ onSend, disabled }: Props) {
             display: 'block',
           }}
         />
+
+        <button
+          onClick={() => setShowCamera(true)}
+          disabled={disabled}
+          title="Scansiona targa o libretto"
+          style={{
+            background: 'none',
+            border: 'none',
+            borderRadius: 6,
+            color: '#64748b',
+            cursor: disabled ? 'default' : 'pointer',
+            padding: 4,
+            display: 'flex',
+            alignItems: 'center',
+            flexShrink: 0,
+            transition: 'color 0.15s',
+          }}
+        >
+          <Camera size={18} />
+        </button>
 
         <button
           onClick={handleMicClick}
@@ -144,6 +172,7 @@ export function ChatInput({ onSend, disabled }: Props) {
         </button>
 
         <button
+          data-testid="send-btn"
           onClick={handleSend}
           disabled={!canSend}
           title="Invia"
@@ -164,5 +193,6 @@ export function ChatInput({ onSend, disabled }: Props) {
         </button>
       </div>
     </div>
+    </>
   )
 }

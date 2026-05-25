@@ -3,7 +3,7 @@ import { MessageList } from './components/chat/MessageList'
 import { ChatInput } from './components/chat/ChatInput'
 
 export default function App() {
-  const { messages, confirmedCar, isStreaming, sendMessage, selectCar, selectDtcCar, selectSymptomCar, resetCar } = useChat()
+  const { messages, confirmedCar, isStreaming, sendMessage, selectCar, selectDtcCar, selectSymptomCar, resetCar, findAlternativeDocument, showSuggestedDocument } = useChat()
 
   return (
     <div style={{
@@ -75,7 +75,8 @@ export default function App() {
         onSelectCar={selectCar}
         onSelectDtcCar={selectDtcCar}
         onSymptomCarSelect={selectSymptomCar}
-
+        onFindAnother={findAlternativeDocument}
+        onShowSuggestion={showSuggestedDocument}
       />
 
       {/* Input */}
